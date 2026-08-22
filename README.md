@@ -19,16 +19,18 @@
 - **Bitwarden CLI:** The executable (`bw` or `bw.exe`) should be placed in `.minecraft/config/sypass/` or installed globally in your system `PATH`.
 
 ---
-
 ## 📦 Building from Source
 
-To build the mod file yourself, run the following command in the project root:
+To build the mod for all supported Minecraft versions, run:
 
 ```bash
 ./gradlew build
 ```
+The compiled .jar files will be located in:
 
-The compiled .jar file will be located in build/libs/.
+versions/1.21.1/build/libs/ (for MC 1.21 – 1.21.1)
+versions/1.21.11/build/libs/ (for MC 1.21.2 – 1.21.11+)
+
 
 📄 License
 This project is licensed under the MIT License - see the LICENSE file for details.

@@ -1,0 +1,38 @@
+{
+	"schemaVersion": 1,
+	"id": "sypass",
+	"version": "${version}",
+	"name": "SY-Pass",
+	"description": "A seamless Minecraft password manager mod with local encrypted storage and official Bitwarden CLI integration for automated server authentication.",
+	"authors": [
+		"Syntren"
+	],
+	"contact": {
+		"homepage": "https://github.com/Syntren/SY-Pass",
+		"sources": "https://github.com/Syntren/SY-Pass"
+	},
+	"license": "MIT",
+	"icon": "assets/sypass/icon.png",
+	"environment": "client",
+	"entrypoints": {
+		"main": [
+			"com.syntren.sypass.SYPass"
+		],
+		"client": [
+			"com.syntren.sypass.client.SYPassClient"
+		]
+	},
+	"mixins": [
+		"sypass.mixins.json",
+		{
+			"config": "sypass.client.mixins.json",
+			"environment": "client"
+		}
+	],
+	"depends": {
+		"fabricloader": ">=0.19.3",
+		"minecraft": "~1.21.1",
+		"java": ">=21",
+		"fabric-api": "*"
+	}
+}

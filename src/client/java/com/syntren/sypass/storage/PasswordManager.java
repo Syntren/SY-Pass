@@ -10,6 +10,9 @@ import net.fabricmc.loader.api.FabricLoader;
 import javax.crypto.Cipher;
 import javax.crypto.KeyGenerator;
 import javax.crypto.SecretKey;
+import javax.crypto.SecretKeyFactory;
+import javax.crypto.spec.GCMParameterSpec;
+import javax.crypto.spec.PBEKeySpec;
 import javax.crypto.spec.SecretKeySpec;
 import java.io.File;
 import java.io.FileReader;
@@ -302,6 +305,10 @@ public class PasswordManager {
     }
 
     public static synchronized String exportBackup() {
+        return exportBackup(null);
+    }
+
+    public static synchronized String exportBackup(String backupPassword) {
         try {
             Path backupsDir = CONFIG_DIR.resolve("backups");
             if (!Files.exists(backupsDir)) {
@@ -329,10 +336,37 @@ public class PasswordManager {
             root.add("servers", servers);
 
             String jsonStr = GSON.toJson(root);
-            String encrypted = encrypt(jsonStr);
 
             JsonObject wrapper = new JsonObject();
-            wrapper.addProperty("encrypted_backup", encrypted);
+            wrapper.addProperty("version", 1);
+            wrapper.addProperty("timestamp", timestamp);
+
+            if (backupPassword != null && !backupPassword.isBlank()) {
+                byte[] salt = new byte[16];
+                byte[] iv = new byte[GCM_IV_LENGTH];
+                java.security.SecureRandom random = new java.security.SecureRandom();
+                random.nextBytes(salt);
+                random.nextBytes(iv);
+
+                SecretKeyFactory factory = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256");
+                PBEKeySpec pbeSpec = new PBEKeySpec(backupPassword.trim().toCharArray(), salt, 100000, 256);
+                SecretKey derivedKey = new SecretKeySpec(factory.generateSecret(pbeSpec).getEncoded(), "AES");
+
+                Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
+                cipher.init(Cipher.ENCRYPT_MODE, derivedKey, new GCMParameterSpec(GCM_TAG_LENGTH_BIT, iv));
+                byte[] cipherBytes = cipher.doFinal(jsonStr.getBytes(StandardCharsets.UTF_8));
+
+                wrapper.addProperty("mode", "pbkdf2");
+                wrapper.addProperty("kdf", "PBKDF2WithHmacSHA256");
+                wrapper.addProperty("iterations", 100000);
+                wrapper.addProperty("salt", Base64.getEncoder().encodeToString(salt));
+                wrapper.addProperty("iv", Base64.getEncoder().encodeToString(iv));
+                wrapper.addProperty("ciphertext", Base64.getEncoder().encodeToString(cipherBytes));
+            } else {
+                wrapper.addProperty("mode", "local_key");
+                wrapper.addProperty("ciphertext", encrypt(jsonStr));
+            }
+
             try (FileWriter writer = new FileWriter(backupFile.toFile())) {
                 GSON.toJson(wrapper, writer);
             }
@@ -344,6 +378,10 @@ public class PasswordManager {
     }
 
     public static synchronized int importLatestBackup() {
+        return importLatestBackup(null);
+    }
+
+    public static synchronized int importLatestBackup(String backupPassword) {
         try {
             Path backupsDir = CONFIG_DIR.resolve("backups");
             if (!Files.exists(backupsDir)) {
@@ -354,7 +392,7 @@ public class PasswordManager {
                 return -1;
             }
             java.util.Arrays.sort(files, (a, b) -> Long.compare(b.lastModified(), a.lastModified()));
-            return importBackupFile(files[0]);
+            return importBackupFile(files[0], backupPassword);
         } catch (Exception e) {
             e.printStackTrace();
             return -2;
@@ -362,11 +400,50 @@ public class PasswordManager {
     }
 
     public static synchronized int importBackupFile(File file) {
+        return importBackupFile(file, null);
+    }
+
+    public static synchronized int importBackupFile(File file, String backupPassword) {
         if (file == null || !file.exists()) return -1;
         try (FileReader reader = new FileReader(file)) {
             JsonObject wrapper = GSON.fromJson(reader, JsonObject.class);
-            if (wrapper == null || !wrapper.has("encrypted_backup")) return -2;
-            String decryptedJson = decrypt(wrapper.get("encrypted_backup").getAsString());
+            if (wrapper == null) return -2;
+
+            String decryptedJson = null;
+
+            if (wrapper.has("mode") && "pbkdf2".equalsIgnoreCase(wrapper.get("mode").getAsString())) {
+                if (backupPassword == null || backupPassword.isBlank()) {
+                    return -3; // Password required
+                }
+                try {
+                    byte[] salt = Base64.getDecoder().decode(wrapper.get("salt").getAsString());
+                    byte[] iv = Base64.getDecoder().decode(wrapper.get("iv").getAsString());
+                    byte[] cipherBytes = Base64.getDecoder().decode(wrapper.get("ciphertext").getAsString());
+                    int iterations = wrapper.has("iterations") ? wrapper.get("iterations").getAsInt() : 100000;
+
+                    SecretKeyFactory factory = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256");
+                    PBEKeySpec pbeSpec = new PBEKeySpec(backupPassword.trim().toCharArray(), salt, iterations, 256);
+                    SecretKey derivedKey = new SecretKeySpec(factory.generateSecret(pbeSpec).getEncoded(), "AES");
+
+                    Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
+                    cipher.init(Cipher.DECRYPT_MODE, derivedKey, new GCMParameterSpec(GCM_TAG_LENGTH_BIT, iv));
+                    byte[] plainBytes = cipher.doFinal(cipherBytes);
+                    decryptedJson = new String(plainBytes, StandardCharsets.UTF_8);
+                } catch (java.security.GeneralSecurityException e) {
+                    return -4; // Wrong password
+                }
+            } else if (wrapper.has("encrypted_backup") || (wrapper.has("mode") && "local_key".equalsIgnoreCase(wrapper.get("mode").getAsString()))) {
+                String encryptedStr = wrapper.has("ciphertext") ? wrapper.get("ciphertext").getAsString() : wrapper.get("encrypted_backup").getAsString();
+                try {
+                    decryptedJson = decrypt(encryptedStr);
+                } catch (Exception e) {
+                    return -5; // Key mismatch
+                }
+            } else {
+                return -2;
+            }
+
+            if (decryptedJson == null) return -2;
             JsonObject root = JsonParser.parseString(decryptedJson).getAsJsonObject();
             if (!root.has("servers")) return -2;
             JsonObject servers = root.getAsJsonObject("servers");

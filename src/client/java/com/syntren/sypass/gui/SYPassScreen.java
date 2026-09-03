@@ -415,13 +415,15 @@ public class SYPassScreen extends BaseOwoScreen<FlowLayout> {
     // Вкладка Bitwarden
     // ==========================================
     private void buildBitwardenTab(FlowLayout root) {
-        if (BitwardenManager.hasActiveSession() && bwStage != BwStage.LOGGED_IN) {
+        if (BitwardenManager.hasActiveSession() && bwStage != BwStage.LOGGED_IN
+                && bwStage != BwStage.CONFIRM_LOGOUT && bwStage != BwStage.CONFIRM_DELETE_CLI) {
             bwStage = BwStage.LOGGED_IN;
         }
 
         boolean cliReady = BitwardenManager.isCliInstalled();
 
-        if (!cliReady && bwStage != BwStage.CLI_CONFIRM_DOWNLOAD && bwStage != BwStage.CLI_DOWNLOADING && bwStage != BwStage.CHECKING_STATUS) {
+        if (!cliReady && bwStage != BwStage.CLI_CONFIRM_DOWNLOAD && bwStage != BwStage.CLI_DOWNLOADING
+                && bwStage != BwStage.CHECKING_STATUS && bwStage != BwStage.CONFIRM_DELETE_CLI) {
             bwStage = BwStage.CLI_NOT_FOUND;
         } else if (cliReady && (bwStage == BwStage.CLI_NOT_FOUND || bwStage == BwStage.CLI_DOWNLOADING)) {
             bwStage = BitwardenManager.hasActiveSession() ? BwStage.LOGGED_IN : BwStage.LOGIN;
@@ -952,9 +954,13 @@ public class SYPassScreen extends BaseOwoScreen<FlowLayout> {
                     if (!info.isInstalled()) {
                         this.bwStage = BwStage.CLI_NOT_FOUND;
                     } else if (info.isUnlocked() || BitwardenManager.hasActiveSession()) {
-                        this.bwStage = BwStage.LOGGED_IN;
-                    } else if (this.bwStage == BwStage.CHECKING_STATUS) {
-                        this.bwStage = BwStage.LOGIN;
+                        if (this.bwStage != BwStage.CONFIRM_LOGOUT && this.bwStage != BwStage.CONFIRM_DELETE_CLI) {
+                            this.bwStage = BwStage.LOGGED_IN;
+                        }
+                    } else {
+                        if (this.bwStage == BwStage.CHECKING_STATUS || this.bwStage == BwStage.LOGGED_IN || this.bwStage == BwStage.CONFIRM_LOGOUT) {
+                            this.bwStage = BwStage.LOGIN;
+                        }
                     }
                     rebuildUI();
                 });

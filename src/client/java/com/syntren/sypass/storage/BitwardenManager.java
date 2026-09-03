@@ -324,6 +324,18 @@ public class BitwardenManager {
         return cachedStatus;
     }
 
+    public static boolean configureServer(String serverUrl) {
+        try {
+            String target = (serverUrl != null && !serverUrl.isBlank()) ? serverUrl.trim() : "https://vault.bitwarden.com";
+            BwResult res = executeBwCommand("config", "server", target);
+            invalidateStatusCache();
+            return res != null && res.exitCode() == 0;
+        } catch (Exception e) {
+            LOGGER.error("[SYPass] Failed to configure server URL", e);
+            return false;
+        }
+    }
+
     public static BwLoginResponse login(String email, String password, String otp) {
         return login(email, password, otp, null);
     }
@@ -342,9 +354,15 @@ public class BitwardenManager {
         }
 
         try {
+            String customServer = com.syntren.sypass.config.SYPassConfig.getCustomServerUrl();
+            if (!customServer.isEmpty()) {
+                configureServer(customServer);
+            }
+
             if (statusInfo.isLocked() && statusInfo.userEmail().equalsIgnoreCase(email)) {
-                LOGGER.info("[SYPass] Attempting unlock for {}", email);
-                BwResult unlockResult = executeBwCommand("unlock", password, "--raw");
+                LOGGER.info("[SYPass] Attempting secure unlock for {}", email);
+                Map<String, String> unlockEnv = Map.of("BW_PASSWORD", password);
+                BwResult unlockResult = executeBwCommandWithEnv(unlockEnv, "unlock", "--passwordenv", "BW_PASSWORD", "--raw");
                 if (unlockResult != null && unlockResult.exitCode() == 0 && isValidSessionKey(unlockResult.output())) {
                     setSessionKey(unlockResult.output().trim());
                     return new BwLoginResponse(LoginStatus.SUCCESS, "Сховище успішно розблоковано!", sessionKey);
@@ -390,7 +408,8 @@ public class BitwardenManager {
         List<String> args = new ArrayList<>();
         args.add("login");
         args.add(email);
-        args.add(password);
+        args.add("--passwordenv");
+        args.add("BW_PASSWORD");
 
         if (method != null && !method.isBlank()) {
             args.add("--method");
@@ -403,8 +422,10 @@ public class BitwardenManager {
         }
         args.add("--raw");
 
-        LOGGER.info("[SYPass] Sending login command for: {} (hasOtp={}, method={})", email, hasOtp, method);
-        BwResult result = executeBwCommand(args.toArray(new String[0]));
+        LOGGER.info("[SYPass] Sending secure login command for: {} (hasOtp={}, method={})", email, hasOtp, method);
+        Map<String, String> env = new HashMap<>();
+        env.put("BW_PASSWORD", password);
+        BwResult result = executeBwCommandWithEnv(env, args.toArray(new String[0]));
         if (result == null) {
             return new BwLoginResponse(LoginStatus.ERROR, "Не вдалося запустити Bitwarden CLI", "");
         }
@@ -461,6 +482,11 @@ public class BitwardenManager {
         }
 
         try {
+            String customServer = com.syntren.sypass.config.SYPassConfig.getCustomServerUrl();
+            if (!customServer.isEmpty()) {
+                configureServer(customServer);
+            }
+
             executeBwCommand("logout");
 
             Map<String, String> env = new HashMap<>();
@@ -473,7 +499,8 @@ public class BitwardenManager {
                 return new BwLoginResponse(LoginStatus.ERROR, "Помилка API Key: " + err, "");
             }
 
-            BwResult unlockRes = executeBwCommand("unlock", masterPassword.trim(), "--raw");
+            Map<String, String> unlockEnv = Map.of("BW_PASSWORD", masterPassword.trim());
+            BwResult unlockRes = executeBwCommandWithEnv(unlockEnv, "unlock", "--passwordenv", "BW_PASSWORD", "--raw");
             if (unlockRes != null && unlockRes.exitCode() == 0 && isValidSessionKey(unlockRes.output())) {
                 setSessionKey(unlockRes.output().trim());
                 return new BwLoginResponse(LoginStatus.SUCCESS, "Успішний вхід за API ключем!", sessionKey);

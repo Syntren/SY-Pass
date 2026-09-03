@@ -2,6 +2,8 @@ package com.syntren.sypass.storage;
 
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 import com.google.gson.reflect.TypeToken;
 import net.fabricmc.loader.api.FabricLoader;
 
@@ -296,6 +298,96 @@ public class PasswordManager {
             return new String(decryptedBytes, StandardCharsets.UTF_8);
         } catch (Exception e) {
             throw new IllegalStateException("Failed to decrypt data", e);
+        }
+    }
+
+    public static synchronized String exportBackup() {
+        try {
+            Path backupsDir = CONFIG_DIR.resolve("backups");
+            if (!Files.exists(backupsDir)) {
+                Files.createDirectories(backupsDir);
+            }
+            String timestamp = new java.text.SimpleDateFormat("yyyy-MM-dd_HH-mm-ss").format(new java.util.Date());
+            Path backupFile = backupsDir.resolve("sypass-backup-" + timestamp + ".json");
+
+            JsonObject root = new JsonObject();
+            JsonObject servers = new JsonObject();
+            for (Map.Entry<String, Map<String, AccountData>> sEntry : memoryData.entrySet()) {
+                JsonObject accs = new JsonObject();
+                for (Map.Entry<String, AccountData> aEntry : sEntry.getValue().entrySet()) {
+                    JsonObject acc = new JsonObject();
+                    acc.addProperty("password", aEntry.getValue().password());
+                    acc.addProperty("command", aEntry.getValue().command());
+                    acc.addProperty("isSynced", aEntry.getValue().isSynced());
+                    acc.addProperty("remoteId", aEntry.getValue().remoteId());
+                    accs.add(aEntry.getKey(), acc);
+                }
+                servers.add(sEntry.getKey(), accs);
+            }
+            root.addProperty("version", 1);
+            root.addProperty("timestamp", timestamp);
+            root.add("servers", servers);
+
+            String jsonStr = GSON.toJson(root);
+            String encrypted = encrypt(jsonStr);
+
+            JsonObject wrapper = new JsonObject();
+            wrapper.addProperty("encrypted_backup", encrypted);
+            try (FileWriter writer = new FileWriter(backupFile.toFile())) {
+                GSON.toJson(wrapper, writer);
+            }
+            return backupFile.getFileName().toString();
+        } catch (Exception e) {
+            e.printStackTrace();
+            return null;
+        }
+    }
+
+    public static synchronized int importLatestBackup() {
+        try {
+            Path backupsDir = CONFIG_DIR.resolve("backups");
+            if (!Files.exists(backupsDir)) {
+                return -1;
+            }
+            File[] files = backupsDir.toFile().listFiles((dir, name) -> name.endsWith(".json"));
+            if (files == null || files.length == 0) {
+                return -1;
+            }
+            java.util.Arrays.sort(files, (a, b) -> Long.compare(b.lastModified(), a.lastModified()));
+            return importBackupFile(files[0]);
+        } catch (Exception e) {
+            e.printStackTrace();
+            return -2;
+        }
+    }
+
+    public static synchronized int importBackupFile(File file) {
+        if (file == null || !file.exists()) return -1;
+        try (FileReader reader = new FileReader(file)) {
+            JsonObject wrapper = GSON.fromJson(reader, JsonObject.class);
+            if (wrapper == null || !wrapper.has("encrypted_backup")) return -2;
+            String decryptedJson = decrypt(wrapper.get("encrypted_backup").getAsString());
+            JsonObject root = JsonParser.parseString(decryptedJson).getAsJsonObject();
+            if (!root.has("servers")) return -2;
+            JsonObject servers = root.getAsJsonObject("servers");
+            int count = 0;
+            for (String serverIp : servers.keySet()) {
+                JsonObject accs = servers.getAsJsonObject(serverIp);
+                for (String user : accs.keySet()) {
+                    JsonObject acc = accs.getAsJsonObject(user);
+                    String pass = acc.get("password").getAsString();
+                    String cmd = acc.has("command") ? acc.get("command").getAsString() : "/login";
+                    boolean synced = acc.has("isSynced") && acc.get("isSynced").getAsBoolean();
+                    String remoteId = acc.has("remoteId") ? acc.get("remoteId").getAsString() : "";
+                    savePassword(serverIp, user, pass, cmd, synced, remoteId);
+                    count++;
+                }
+            }
+            saveToFile();
+            return count;
+        } catch (Exception e) {
+            e.printStackTrace();
+            return -2;
         }
     }
 }

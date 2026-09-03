@@ -20,6 +20,7 @@ public class SYPassConfig {
     public static class ConfigData {
         public boolean autoSync = true;
         public int autoLoginDelayTicks = 30;
+        public String customServerUrl = "";
     }
 
     public static void load() {
@@ -71,6 +72,15 @@ public class SYPassConfig {
 
     public static void setAutoLoginDelayTicks(int ticks) {
         data.autoLoginDelayTicks = Math.max(5, Math.min(200, ticks));
+        save();
+    }
+
+    public static String getCustomServerUrl() {
+        return data.customServerUrl != null ? data.customServerUrl.trim() : "";
+    }
+
+    public static void setCustomServerUrl(String url) {
+        data.customServerUrl = url != null ? url.trim() : "";
         save();
     }
 }

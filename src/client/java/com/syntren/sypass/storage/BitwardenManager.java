@@ -107,7 +107,9 @@ public class BitwardenManager {
         logout();
         invalidateStatusCache();
         try {
-            return Files.deleteIfExists(LOCAL_CLI_PATH);
+            boolean deleted = Files.deleteIfExists(LOCAL_CLI_PATH);
+            invalidateStatusCache();
+            return deleted;
         } catch (Exception e) {
             LOGGER.error("[SYPass] Failed to delete local CLI", e);
             return false;
@@ -293,7 +295,6 @@ public class BitwardenManager {
 
     public static boolean isCliInstalled() {
         if (isLocalCliInstalled()) return true;
-        if (cachedStatus != null) return cachedStatus.isInstalled();
         String exe = getCliExecutable();
         return !exe.equals("bw") && !exe.equals("bw.cmd");
     }
@@ -307,6 +308,13 @@ public class BitwardenManager {
         String cliPath = getCliExecutable();
         boolean local = isLocalCliInstalled();
         boolean installed = isCliInstalled();
+
+        if (!installed) {
+            cachedStatus = new BwStatusInfo(false, false, cliPath, "not_found", "", "");
+            lastStatusQueryMs = now;
+            return cachedStatus;
+        }
+
         try {
             BwResult result = executeBwCommand("status");
             String jsonStr = (result != null) ? extractJson(result.output()) : "";

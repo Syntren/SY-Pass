@@ -498,7 +498,10 @@ public class SYPassScreen extends BaseOwoScreen<FlowLayout> {
 
                 ButtonComponent checkBtn = Components.button(Text.translatable("sypass.gui.bw.button.check_again"), b -> {
                     BitwardenManager.invalidateStatusCache();
-                    updateBitwardenStatusAsync();
+                    this.cachedStatusInfo = null;
+                    if (BitwardenManager.isCliInstalled()) {
+                        updateBitwardenStatusAsync();
+                    }
                     rebuildUI();
                 });
                 checkBtn.horizontalSizing(Sizing.fill(100));
@@ -787,9 +790,9 @@ public class SYPassScreen extends BaseOwoScreen<FlowLayout> {
 
                 ButtonComponent yesBtn = Components.button(Text.translatable("sypass.gui.bw.confirm_logout.yes"), b -> {
                     BitwardenManager.logout();
+                    this.cachedStatusInfo = null;
                     bwStage = BwStage.LOGIN;
                     statusMessage = "§e" + Text.translatable("sypass.gui.bw.logged.logout").getString();
-                    updateBitwardenStatusAsync();
                     rebuildUI();
                 });
                 yesBtn.horizontalSizing(Sizing.fixed(btnW));
@@ -820,9 +823,9 @@ public class SYPassScreen extends BaseOwoScreen<FlowLayout> {
 
                 ButtonComponent yesBtn = Components.button(Text.translatable("sypass.gui.bw.confirm_delete_cli.yes"), b -> {
                     boolean deleted = BitwardenManager.deleteLocalCli();
+                    this.cachedStatusInfo = null;
+                    this.bwStage = BwStage.CLI_NOT_FOUND;
                     statusMessage = deleted ? "§e" + Text.translatable("sypass.gui.bw.delete_local_cli").getString() : "§c" + Text.translatable("sypass.gui.bw.error.generic", "Delete failed").getString();
-                    bwStage = BwStage.CLI_NOT_FOUND;
-                    updateBitwardenStatusAsync();
                     rebuildUI();
                 });
                 yesBtn.horizontalSizing(Sizing.fixed(btnW));

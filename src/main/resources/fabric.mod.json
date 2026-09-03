@@ -3,7 +3,7 @@
 	"id": "sypass",
 	"version": "${version}",
 	"name": "SY-Pass",
-	"description": "A seamless Minecraft password manager mod with local encrypted storage and official Bitwarden CLI integration for automated server authentication.",
+	"description": "A seamless Minecraft password manager mod with local encrypted storage and integration with the official Bitwarden CLI for automated server authentication.",
 	"authors": [
 		"Syntren"
 	],

@@ -51,9 +51,15 @@ public class SYPassScreen extends BaseOwoScreen<FlowLayout> {
         CONFIRM_DELETE_CLI
     }
 
+    private enum SettingsStage {
+        MAIN,
+        BACKUP
+    }
+
     private Tab activeTab = Tab.LOCAL_PASSWORDS;
     private BwStage bwStage = BitwardenManager.hasActiveSession() ? BwStage.LOGGED_IN : BwStage.CHECKING_STATUS;
     private BwStage preConfirmStage = BwStage.LOGGED_IN;
+    private SettingsStage settingsStage = SettingsStage.MAIN;
 
     private String searchQuery = "";
     private String statusMessage = "";
@@ -201,6 +207,8 @@ public class SYPassScreen extends BaseOwoScreen<FlowLayout> {
                 Sizing.fixed(scrollHeight),
                 this.passwordListContainer
         );
+        scrollContainer.scrollbar(ScrollContainer.Scrollbar.vanilla());
+        scrollContainer.scrollbarThiccness(6);
         scrollContainer.margins(Insets.bottom(4));
         root.child(scrollContainer);
 
@@ -853,6 +861,8 @@ public class SYPassScreen extends BaseOwoScreen<FlowLayout> {
                 Sizing.fixed(scrollHeight),
                 mainCard
         );
+        scroll.scrollbar(ScrollContainer.Scrollbar.vanilla());
+        scroll.scrollbarThiccness(6);
         scroll.margins(Insets.vertical(2));
         root.child(scroll);
 
@@ -1171,185 +1181,212 @@ public class SYPassScreen extends BaseOwoScreen<FlowLayout> {
         mainCard.padding(Insets.of(10));
         mainCard.margins(Insets.top(4));
 
-        mainCard.child(Components.label(Text.translatable("sypass.gui.settings.title").formatted(Formatting.GOLD, Formatting.BOLD)).shadow(true).margins(Insets.bottom(4)));
+        switch (settingsStage) {
+            case MAIN -> {
+                mainCard.child(Components.label(Text.translatable("sypass.gui.settings.title").formatted(Formatting.GOLD, Formatting.BOLD)).shadow(true).margins(Insets.bottom(4)));
 
-        // 1. Авто-синхронізація
-        boolean autoSync = com.syntren.sypass.config.SYPassConfig.isAutoSyncEnabled();
-        ButtonComponent syncToggle = Components.button(
-                Text.translatable("sypass.gui.settings.autosync", autoSync ? "§a" + Text.translatable("sypass.gui.settings.on").getString() : "§c" + Text.translatable("sypass.gui.settings.off").getString()),
-                b -> {
-                    boolean newVal = !com.syntren.sypass.config.SYPassConfig.isAutoSyncEnabled();
-                    com.syntren.sypass.config.SYPassConfig.setAutoSyncEnabled(newVal);
-                    b.setMessage(Text.translatable("sypass.gui.settings.autosync", newVal ? "§a" + Text.translatable("sypass.gui.settings.on").getString() : "§c" + Text.translatable("sypass.gui.settings.off").getString()));
-                }
-        );
-        syncToggle.horizontalSizing(Sizing.fill(100));
-        syncToggle.tooltip(Text.translatable("sypass.gui.settings.autosync.tooltip"));
-        mainCard.child(syncToggle);
+                // 1. Авто-синхронізація
+                boolean autoSync = com.syntren.sypass.config.SYPassConfig.isAutoSyncEnabled();
+                ButtonComponent syncToggle = Components.button(
+                        Text.translatable("sypass.gui.settings.autosync", autoSync ? "§a" + Text.translatable("sypass.gui.settings.on").getString() : "§c" + Text.translatable("sypass.gui.settings.off").getString()),
+                        b -> {
+                            boolean newVal = !com.syntren.sypass.config.SYPassConfig.isAutoSyncEnabled();
+                            com.syntren.sypass.config.SYPassConfig.setAutoSyncEnabled(newVal);
+                            b.setMessage(Text.translatable("sypass.gui.settings.autosync", newVal ? "§a" + Text.translatable("sypass.gui.settings.on").getString() : "§c" + Text.translatable("sypass.gui.settings.off").getString()));
+                        }
+                );
+                syncToggle.horizontalSizing(Sizing.fill(100));
+                syncToggle.tooltip(Text.translatable("sypass.gui.settings.autosync.tooltip"));
+                mainCard.child(syncToggle);
 
-        // 2. Затримка авто-входу
-        int delayTicks = com.syntren.sypass.config.SYPassConfig.getAutoLoginDelayTicks();
-        float delaySec = delayTicks / 20.0f;
-        LabelComponent delayLabel = Components.label(Text.translatable("sypass.gui.settings.delay", delayTicks, String.format("%.1f", delaySec)));
-        delayLabel.shadow(true);
-        mainCard.child(delayLabel);
+                // 2. Затримка авто-входу
+                int delayTicks = com.syntren.sypass.config.SYPassConfig.getAutoLoginDelayTicks();
+                float delaySec = delayTicks / 20.0f;
+                LabelComponent delayLabel = Components.label(Text.translatable("sypass.gui.settings.delay", delayTicks, String.format("%.1f", delaySec)));
+                delayLabel.shadow(true);
+                mainCard.child(delayLabel);
 
-        FlowLayout delayButtons = Containers.horizontalFlow(Sizing.fill(100), Sizing.fixed(20));
-        delayButtons.gap(4);
-        delayButtons.horizontalAlignment(HorizontalAlignment.CENTER);
+                FlowLayout delayButtons = Containers.horizontalFlow(Sizing.fill(100), Sizing.fixed(20));
+                delayButtons.gap(4);
+                delayButtons.horizontalAlignment(HorizontalAlignment.CENTER);
 
-        ButtonComponent minus10 = Components.button(Text.literal("-10t"), b -> {
-            int cur = com.syntren.sypass.config.SYPassConfig.getAutoLoginDelayTicks();
-            com.syntren.sypass.config.SYPassConfig.setAutoLoginDelayTicks(cur - 10);
-            int updated = com.syntren.sypass.config.SYPassConfig.getAutoLoginDelayTicks();
-            delayLabel.text(Text.translatable("sypass.gui.settings.delay", updated, String.format("%.1f", updated / 20.0f)));
-        });
-        minus10.horizontalSizing(Sizing.fixed(50));
+                ButtonComponent minus10 = Components.button(Text.literal("-10t"), b -> {
+                    int cur = com.syntren.sypass.config.SYPassConfig.getAutoLoginDelayTicks();
+                    com.syntren.sypass.config.SYPassConfig.setAutoLoginDelayTicks(cur - 10);
+                    int updated = com.syntren.sypass.config.SYPassConfig.getAutoLoginDelayTicks();
+                    delayLabel.text(Text.translatable("sypass.gui.settings.delay", updated, String.format("%.1f", updated / 20.0f)));
+                });
+                minus10.horizontalSizing(Sizing.fixed(50));
 
-        ButtonComponent minus5 = Components.button(Text.literal("-5t"), b -> {
-            int cur = com.syntren.sypass.config.SYPassConfig.getAutoLoginDelayTicks();
-            com.syntren.sypass.config.SYPassConfig.setAutoLoginDelayTicks(cur - 5);
-            int updated = com.syntren.sypass.config.SYPassConfig.getAutoLoginDelayTicks();
-            delayLabel.text(Text.translatable("sypass.gui.settings.delay", updated, String.format("%.1f", updated / 20.0f)));
-        });
-        minus5.horizontalSizing(Sizing.fixed(45));
+                ButtonComponent minus5 = Components.button(Text.literal("-5t"), b -> {
+                    int cur = com.syntren.sypass.config.SYPassConfig.getAutoLoginDelayTicks();
+                    com.syntren.sypass.config.SYPassConfig.setAutoLoginDelayTicks(cur - 5);
+                    int updated = com.syntren.sypass.config.SYPassConfig.getAutoLoginDelayTicks();
+                    delayLabel.text(Text.translatable("sypass.gui.settings.delay", updated, String.format("%.1f", updated / 20.0f)));
+                });
+                minus5.horizontalSizing(Sizing.fixed(45));
 
-        ButtonComponent plus5 = Components.button(Text.literal("+5t"), b -> {
-            int cur = com.syntren.sypass.config.SYPassConfig.getAutoLoginDelayTicks();
-            com.syntren.sypass.config.SYPassConfig.setAutoLoginDelayTicks(cur + 5);
-            int updated = com.syntren.sypass.config.SYPassConfig.getAutoLoginDelayTicks();
-            delayLabel.text(Text.translatable("sypass.gui.settings.delay", updated, String.format("%.1f", updated / 20.0f)));
-        });
-        plus5.horizontalSizing(Sizing.fixed(45));
+                ButtonComponent plus5 = Components.button(Text.literal("+5t"), b -> {
+                    int cur = com.syntren.sypass.config.SYPassConfig.getAutoLoginDelayTicks();
+                    com.syntren.sypass.config.SYPassConfig.setAutoLoginDelayTicks(cur + 5);
+                    int updated = com.syntren.sypass.config.SYPassConfig.getAutoLoginDelayTicks();
+                    delayLabel.text(Text.translatable("sypass.gui.settings.delay", updated, String.format("%.1f", updated / 20.0f)));
+                });
+                plus5.horizontalSizing(Sizing.fixed(45));
 
-        ButtonComponent plus10 = Components.button(Text.literal("+10t"), b -> {
-            int cur = com.syntren.sypass.config.SYPassConfig.getAutoLoginDelayTicks();
-            com.syntren.sypass.config.SYPassConfig.setAutoLoginDelayTicks(cur + 10);
-            int updated = com.syntren.sypass.config.SYPassConfig.getAutoLoginDelayTicks();
-            delayLabel.text(Text.translatable("sypass.gui.settings.delay", updated, String.format("%.1f", updated / 20.0f)));
-        });
-        plus10.horizontalSizing(Sizing.fixed(50));
+                ButtonComponent plus10 = Components.button(Text.literal("+10t"), b -> {
+                    int cur = com.syntren.sypass.config.SYPassConfig.getAutoLoginDelayTicks();
+                    com.syntren.sypass.config.SYPassConfig.setAutoLoginDelayTicks(cur + 10);
+                    int updated = com.syntren.sypass.config.SYPassConfig.getAutoLoginDelayTicks();
+                    delayLabel.text(Text.translatable("sypass.gui.settings.delay", updated, String.format("%.1f", updated / 20.0f)));
+                });
+                plus10.horizontalSizing(Sizing.fixed(50));
 
-        delayButtons.child(minus10);
-        delayButtons.child(minus5);
-        delayButtons.child(plus5);
-        delayButtons.child(plus10);
-        mainCard.child(delayButtons);
+                delayButtons.child(minus10);
+                delayButtons.child(minus5);
+                delayButtons.child(plus5);
+                delayButtons.child(plus10);
+                mainCard.child(delayButtons);
 
-        // 3. Сервер Bitwarden / Vaultwarden
-        LabelComponent serverUrlLabel = Components.label(Text.translatable("sypass.gui.settings.server_url"));
-        serverUrlLabel.shadow(true).margins(Insets.top(3));
-        mainCard.child(serverUrlLabel);
+                // 3. Сервер Bitwarden / Vaultwarden
+                LabelComponent serverUrlLabel = Components.label(Text.translatable("sypass.gui.settings.server_url"));
+                serverUrlLabel.shadow(true).margins(Insets.top(3));
+                mainCard.child(serverUrlLabel);
 
-        FlowLayout serverRow = Containers.horizontalFlow(Sizing.fill(100), Sizing.fixed(20));
-        serverRow.gap(4);
+                FlowLayout serverRow = Containers.horizontalFlow(Sizing.fill(100), Sizing.fixed(20));
+                serverRow.gap(4);
 
-        TextBoxComponent serverUrlField = Components.textBox(Sizing.fixed(cardWidth - 54));
-        serverUrlField.setMaxLength(256);
-        serverUrlField.setText(com.syntren.sypass.config.SYPassConfig.getCustomServerUrl());
-        serverUrlField.setPlaceholder(Text.translatable("sypass.gui.settings.server_url.placeholder"));
+                TextBoxComponent serverUrlField = Components.textBox(Sizing.fixed(cardWidth - 54));
+                serverUrlField.setMaxLength(256);
+                serverUrlField.setText(com.syntren.sypass.config.SYPassConfig.getCustomServerUrl());
+                serverUrlField.setPlaceholder(Text.translatable("sypass.gui.settings.server_url.placeholder"));
 
-        ButtonComponent saveServerBtn = Components.button(Text.literal("✔"), b -> {
-            String url = serverUrlField.getText().trim();
-            com.syntren.sypass.config.SYPassConfig.setCustomServerUrl(url);
-            BitwardenManager.configureServer(url);
-            this.statusMessage = "§a" + Text.translatable("sypass.gui.settings.server_url.saved").getString();
-            rebuildUI();
-        });
-        saveServerBtn.horizontalSizing(Sizing.fixed(30));
-        saveServerBtn.tooltip(Text.translatable("sypass.gui.settings.server_url.save"));
+                ButtonComponent saveServerBtn = Components.button(Text.literal("✔"), b -> {
+                    String url = serverUrlField.getText().trim();
+                    com.syntren.sypass.config.SYPassConfig.setCustomServerUrl(url);
+                    BitwardenManager.configureServer(url);
+                    this.statusMessage = "§a" + Text.translatable("sypass.gui.settings.server_url.saved").getString();
+                    rebuildUI();
+                });
+                saveServerBtn.horizontalSizing(Sizing.fixed(30));
+                saveServerBtn.tooltip(Text.translatable("sypass.gui.settings.server_url.save"));
 
-        serverRow.child(serverUrlField);
-        serverRow.child(saveServerBtn);
-        mainCard.child(serverRow);
+                serverRow.child(serverUrlField);
+                serverRow.child(saveServerBtn);
+                mainCard.child(serverRow);
 
-        // 4. Резервне копіювання
-        LabelComponent backupLabel = Components.label(Text.translatable("sypass.gui.settings.backup.title"));
-        backupLabel.shadow(true).margins(Insets.top(3));
-        mainCard.child(backupLabel);
+                // 4. Кнопка переходу до меню бекапів
+                ButtonComponent backupMenuBtn = Components.button(
+                        Text.translatable("sypass.gui.settings.backup.menu_btn"),
+                        b -> {
+                            settingsStage = SettingsStage.BACKUP;
+                            rebuildUI();
+                        }
+                );
+                backupMenuBtn.horizontalSizing(Sizing.fill(100));
+                backupMenuBtn.margins(Insets.top(2));
+                backupMenuBtn.tooltip(Text.translatable("sypass.gui.settings.backup.menu_btn.tooltip"));
+                mainCard.child(backupMenuBtn);
 
-        TextBoxComponent backupPassField = Components.textBox(Sizing.fill(100));
-        backupPassField.setMaxLength(128);
-        backupPassField.setPlaceholder(Text.translatable("sypass.gui.settings.backup.pass_placeholder"));
-        backupPassField.tooltip(Text.translatable("sypass.gui.settings.backup.pass_tooltip"));
-        mainCard.child(backupPassField);
+                // 5. Генератор випадкового пароля
+                ButtonComponent quickGenBtn = Components.button(Text.translatable("sypass.gui.settings.quick_gen"), b -> {
+                    String gen = com.syntren.sypass.util.PasswordGenerator.generateDefault();
+                    if (this.client != null && this.client.keyboard != null) {
+                        this.client.keyboard.setClipboard(gen);
+                    }
+                    this.statusMessage = Text.translatable("sypass.gui.settings.copied_gen", gen).getString();
+                    rebuildUI();
+                });
+                quickGenBtn.horizontalSizing(Sizing.fill(100));
+                quickGenBtn.margins(Insets.top(2));
+                mainCard.child(quickGenBtn);
 
-        FlowLayout backupButtons = Containers.horizontalFlow(Sizing.fill(100), Sizing.fixed(20));
-        backupButtons.gap(4);
-        backupButtons.horizontalAlignment(HorizontalAlignment.CENTER);
-
-        int backupBtnW = (cardWidth - 24) / 3;
-
-        ButtonComponent exportBtn = Components.button(Text.translatable("sypass.gui.settings.backup.export"), b -> {
-            String pass = backupPassField.getText().trim();
-            String name = PasswordManager.exportBackup(pass);
-            if (name != null) {
-                if (!pass.isEmpty()) {
-                    this.statusMessage = "§a" + Text.translatable("sypass.gui.settings.backup.exported_with_pass", name).getString();
-                } else {
-                    this.statusMessage = "§e" + Text.translatable("sypass.gui.settings.backup.exported", name).getString();
-                }
-            } else {
-                this.statusMessage = "§c" + Text.translatable("sypass.gui.settings.backup.export_failed").getString();
+                // 6. Відкрити папку конфігів
+                ButtonComponent openFolderBtn = Components.button(Text.translatable("sypass.gui.bw.button.open_folder"), b -> {
+                    Util.getOperatingSystem().open(BitwardenManager.CONFIG_DIR.toFile());
+                });
+                openFolderBtn.horizontalSizing(Sizing.fill(100));
+                mainCard.child(openFolderBtn);
             }
-            rebuildUI();
-        });
-        exportBtn.horizontalSizing(Sizing.fixed(backupBtnW));
+            case BACKUP -> {
+                mainCard.child(Components.label(Text.translatable("sypass.gui.settings.backup.title").formatted(Formatting.GOLD, Formatting.BOLD)).shadow(true).margins(Insets.bottom(2)));
 
-        ButtonComponent importBtn = Components.button(Text.translatable("sypass.gui.settings.backup.import"), b -> {
-            String pass = backupPassField.getText().trim();
-            int res = PasswordManager.importLatestBackup(pass);
-            if (res >= 0) {
-                this.statusMessage = "§a" + Text.translatable("sypass.gui.settings.backup.imported", res).getString();
-                refreshPasswordList();
-            } else if (res == -1) {
-                this.statusMessage = "§c" + Text.translatable("sypass.gui.settings.backup.not_found").getString();
-            } else if (res == -3) {
-                this.statusMessage = "§c" + Text.translatable("sypass.gui.settings.backup.pass_required").getString();
-            } else if (res == -4) {
-                this.statusMessage = "§c" + Text.translatable("sypass.gui.settings.backup.wrong_pass").getString();
-            } else if (res == -5) {
-                this.statusMessage = "§c" + Text.translatable("sypass.gui.settings.backup.key_mismatch").getString();
-            } else {
-                this.statusMessage = "§c" + Text.translatable("sypass.gui.settings.backup.import_failed").getString();
+                LabelComponent desc = Components.label(Text.translatable("sypass.gui.settings.backup.desc").formatted(Formatting.GRAY));
+                desc.maxWidth(cardWidth - 20);
+                mainCard.child(desc);
+
+                TextBoxComponent backupPassField = Components.textBox(Sizing.fill(100));
+                backupPassField.setMaxLength(128);
+                backupPassField.setPlaceholder(Text.translatable("sypass.gui.settings.backup.pass_placeholder"));
+                backupPassField.tooltip(Text.translatable("sypass.gui.settings.backup.pass_tooltip"));
+                mainCard.child(backupPassField);
+
+                FlowLayout backupButtons = Containers.horizontalFlow(Sizing.fill(100), Sizing.fixed(20));
+                backupButtons.gap(4);
+                backupButtons.horizontalAlignment(HorizontalAlignment.CENTER);
+
+                int backupBtnW = (cardWidth - 24) / 3;
+
+                ButtonComponent exportBtn = Components.button(Text.translatable("sypass.gui.settings.backup.export"), b -> {
+                    String pass = backupPassField.getText().trim();
+                    String name = PasswordManager.exportBackup(pass);
+                    if (name != null) {
+                        if (!pass.isEmpty()) {
+                            this.statusMessage = "§a" + Text.translatable("sypass.gui.settings.backup.exported_with_pass", name).getString();
+                        } else {
+                            this.statusMessage = "§e" + Text.translatable("sypass.gui.settings.backup.exported", name).getString();
+                        }
+                    } else {
+                        this.statusMessage = "§c" + Text.translatable("sypass.gui.settings.backup.export_failed").getString();
+                    }
+                    rebuildUI();
+                });
+                exportBtn.horizontalSizing(Sizing.fixed(backupBtnW));
+
+                ButtonComponent importBtn = Components.button(Text.translatable("sypass.gui.settings.backup.import"), b -> {
+                    String pass = backupPassField.getText().trim();
+                    int res = PasswordManager.importLatestBackup(pass);
+                    if (res >= 0) {
+                        this.statusMessage = "§a" + Text.translatable("sypass.gui.settings.backup.imported", res).getString();
+                        refreshPasswordList();
+                    } else if (res == -1) {
+                        this.statusMessage = "§c" + Text.translatable("sypass.gui.settings.backup.not_found").getString();
+                    } else if (res == -3) {
+                        this.statusMessage = "§c" + Text.translatable("sypass.gui.settings.backup.pass_required").getString();
+                    } else if (res == -4) {
+                        this.statusMessage = "§c" + Text.translatable("sypass.gui.settings.backup.wrong_pass").getString();
+                    } else if (res == -5) {
+                        this.statusMessage = "§c" + Text.translatable("sypass.gui.settings.backup.key_mismatch").getString();
+                    } else {
+                        this.statusMessage = "§c" + Text.translatable("sypass.gui.settings.backup.import_failed").getString();
+                    }
+                    rebuildUI();
+                });
+                importBtn.horizontalSizing(Sizing.fixed(backupBtnW));
+
+                ButtonComponent openBackupsBtn = Components.button(Text.translatable("sypass.gui.settings.backup.open_folder"), b -> {
+                    Path bDir = BitwardenManager.CONFIG_DIR.resolve("backups");
+                    try {
+                        if (!Files.exists(bDir)) Files.createDirectories(bDir);
+                    } catch (Exception ignored) {}
+                    Util.getOperatingSystem().open(bDir.toFile());
+                });
+                openBackupsBtn.horizontalSizing(Sizing.fixed(backupBtnW));
+
+                backupButtons.child(exportBtn);
+                backupButtons.child(importBtn);
+                backupButtons.child(openBackupsBtn);
+                mainCard.child(backupButtons);
+
+                ButtonComponent backBtn = Components.button(Text.translatable("sypass.gui.bw.otp.back"), b -> {
+                    settingsStage = SettingsStage.MAIN;
+                    rebuildUI();
+                });
+                backBtn.horizontalSizing(Sizing.fill(100));
+                backBtn.margins(Insets.top(4));
+                mainCard.child(backBtn);
             }
-            rebuildUI();
-        });
-        importBtn.horizontalSizing(Sizing.fixed(backupBtnW));
-
-        ButtonComponent openBackupsBtn = Components.button(Text.translatable("sypass.gui.settings.backup.open_folder"), b -> {
-            Path bDir = BitwardenManager.CONFIG_DIR.resolve("backups");
-            try {
-                if (!Files.exists(bDir)) Files.createDirectories(bDir);
-            } catch (Exception ignored) {}
-            Util.getOperatingSystem().open(bDir.toFile());
-        });
-        openBackupsBtn.horizontalSizing(Sizing.fixed(backupBtnW));
-
-        backupButtons.child(exportBtn);
-        backupButtons.child(importBtn);
-        backupButtons.child(openBackupsBtn);
-        mainCard.child(backupButtons);
-
-        // 5. Генератор випадкового пароля
-        ButtonComponent quickGenBtn = Components.button(Text.translatable("sypass.gui.settings.quick_gen"), b -> {
-            String gen = com.syntren.sypass.util.PasswordGenerator.generateDefault();
-            if (this.client != null && this.client.keyboard != null) {
-                this.client.keyboard.setClipboard(gen);
-            }
-            this.statusMessage = Text.translatable("sypass.gui.settings.copied_gen", gen).getString();
-            rebuildUI();
-        });
-        quickGenBtn.horizontalSizing(Sizing.fill(100));
-        quickGenBtn.margins(Insets.top(3));
-        mainCard.child(quickGenBtn);
-
-        // 6. Відкрити папку конфігів
-        ButtonComponent openFolderBtn = Components.button(Text.translatable("sypass.gui.bw.button.open_folder"), b -> {
-            Util.getOperatingSystem().open(BitwardenManager.CONFIG_DIR.toFile());
-        });
-        openFolderBtn.horizontalSizing(Sizing.fill(100));
-        mainCard.child(openFolderBtn);
+        }
 
         int scrollHeight = Math.max(100, this.height - 85);
         ScrollContainer<FlowLayout> scroll = Containers.verticalScroll(
@@ -1357,6 +1394,8 @@ public class SYPassScreen extends BaseOwoScreen<FlowLayout> {
                 Sizing.fixed(scrollHeight),
                 mainCard
         );
+        scroll.scrollbar(ScrollContainer.Scrollbar.vanilla());
+        scroll.scrollbarThiccness(6);
         scroll.margins(Insets.vertical(2));
         root.child(scroll);
 

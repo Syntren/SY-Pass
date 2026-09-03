@@ -1,4 +1,7 @@
 {
+  "modmenu.nameTranslation.sypass": "SY-Pass",
+  "modmenu.descriptionTranslation.sypass": "A seamless Minecraft password manager mod with local encrypted storage and integration with the official Bitwarden CLI for automated server authentication.",
+  "modmenu.summaryTranslation.sypass": "In-game password manager with local AES encryption and Bitwarden sync.",
   "key.sypass.open_gui": "Open SY-Pass",
   "category.sypass.title": "SY-Pass Manager",
   "sypass.gui.title": "SY-Pass Manager",

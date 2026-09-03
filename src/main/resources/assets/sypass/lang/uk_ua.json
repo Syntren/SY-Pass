@@ -1,4 +1,7 @@
 {
+  "modmenu.nameTranslation.sypass": "SY-Pass",
+  "modmenu.descriptionTranslation.sypass": "Зручний менеджер паролів для Minecraft із локальним зашифрованим сховищем та інтеграцією з офіційним Bitwarden CLI для автоматичного входу на сервери.",
+  "modmenu.summaryTranslation.sypass": "Внутрішньоігровий менеджер паролів із локальним AES-шифруванням та синхронізацією з Bitwarden.",
   "key.sypass.open_gui": "Відкрити SY-Pass",
   "category.sypass.title": "SY-Pass Manager",
   "sypass.gui.title": "SY-Pass Manager",

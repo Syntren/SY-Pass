@@ -363,8 +363,9 @@ public class PasswordManager {
                 wrapper.addProperty("iv", Base64.getEncoder().encodeToString(iv));
                 wrapper.addProperty("ciphertext", Base64.getEncoder().encodeToString(cipherBytes));
             } else {
-                wrapper.addProperty("mode", "local_key");
-                wrapper.addProperty("ciphertext", encrypt(jsonStr));
+                // Без пароля: відкритий портативний JSON, імпортується скрізь без пароля!
+                wrapper.addProperty("mode", "plain");
+                wrapper.add("servers", servers);
             }
 
             try (FileWriter writer = new FileWriter(backupFile.toFile())) {
@@ -409,9 +410,13 @@ public class PasswordManager {
             JsonObject wrapper = GSON.fromJson(reader, JsonObject.class);
             if (wrapper == null) return -2;
 
-            String decryptedJson = null;
+            JsonObject servers = null;
 
-            if (wrapper.has("mode") && "pbkdf2".equalsIgnoreCase(wrapper.get("mode").getAsString())) {
+            if (wrapper.has("mode") && "plain".equalsIgnoreCase(wrapper.get("mode").getAsString())) {
+                if (wrapper.has("servers")) {
+                    servers = wrapper.getAsJsonObject("servers");
+                }
+            } else if (wrapper.has("mode") && "pbkdf2".equalsIgnoreCase(wrapper.get("mode").getAsString())) {
                 if (backupPassword == null || backupPassword.isBlank()) {
                     return -3; // Password required
                 }
@@ -428,25 +433,33 @@ public class PasswordManager {
                     Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
                     cipher.init(Cipher.DECRYPT_MODE, derivedKey, new GCMParameterSpec(GCM_TAG_LENGTH_BIT, iv));
                     byte[] plainBytes = cipher.doFinal(cipherBytes);
-                    decryptedJson = new String(plainBytes, StandardCharsets.UTF_8);
+                    String decryptedJson = new String(plainBytes, StandardCharsets.UTF_8);
+
+                    JsonObject root = JsonParser.parseString(decryptedJson).getAsJsonObject();
+                    if (root.has("servers")) {
+                        servers = root.getAsJsonObject("servers");
+                    }
                 } catch (java.security.GeneralSecurityException e) {
                     return -4; // Wrong password
                 }
             } else if (wrapper.has("encrypted_backup") || (wrapper.has("mode") && "local_key".equalsIgnoreCase(wrapper.get("mode").getAsString()))) {
                 String encryptedStr = wrapper.has("ciphertext") ? wrapper.get("ciphertext").getAsString() : wrapper.get("encrypted_backup").getAsString();
                 try {
-                    decryptedJson = decrypt(encryptedStr);
+                    String decryptedJson = decrypt(encryptedStr);
+                    JsonObject root = JsonParser.parseString(decryptedJson).getAsJsonObject();
+                    if (root.has("servers")) {
+                        servers = root.getAsJsonObject("servers");
+                    }
                 } catch (Exception e) {
                     return -5; // Key mismatch
                 }
+            } else if (wrapper.has("servers")) {
+                servers = wrapper.getAsJsonObject("servers");
             } else {
                 return -2;
             }
 
-            if (decryptedJson == null) return -2;
-            JsonObject root = JsonParser.parseString(decryptedJson).getAsJsonObject();
-            if (!root.has("servers")) return -2;
-            JsonObject servers = root.getAsJsonObject("servers");
+            if (servers == null) return -2;
             int count = 0;
             for (String serverIp : servers.keySet()) {
                 JsonObject accs = servers.getAsJsonObject(serverIp);

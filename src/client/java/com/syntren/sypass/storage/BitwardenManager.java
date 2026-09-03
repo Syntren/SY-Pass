@@ -416,7 +416,7 @@ public class BitwardenManager {
             args.add(method.trim());
         }
 
-        if (hasOtp) {
+        if (otp != null && !otp.isBlank()) {
             args.add("--code");
             args.add(otp.trim());
         }
@@ -577,9 +577,12 @@ public class BitwardenManager {
                         String key = serverIp.toLowerCase() + "|" + username.toLowerCase();
                         if (!remoteKeys.contains(key)) {
                             importedCount++;
+                            PasswordManager.savePassword(serverIp, username, password, command, true, id);
+                            remoteKeys.add(key);
+                        } else {
+                            LOGGER.info("[SYPass] Removing redundant duplicate item in Bitwarden: id={}, server={}, user={}", id, serverIp, username);
+                            executeBwCommand("delete", "item", id, "--permanent");
                         }
-                        PasswordManager.savePassword(serverIp, username, password, command, true, id);
-                        remoteKeys.add(key);
                     }
                 }
             }
@@ -662,12 +665,14 @@ public class BitwardenManager {
                     PasswordManager.AccountData data = accEntry.getValue();
 
                     String key = serverIp.toLowerCase() + "|" + username.toLowerCase();
-                    String existingId = data.remoteId().isEmpty() ? existingItemIds.get(key) : data.remoteId();
+                    String existingId = (data.remoteId() != null && !data.remoteId().isBlank())
+                            ? data.remoteId()
+                            : existingItemIds.get(key);
 
-                    boolean success = createOrUpdateBitwardenItem(existingId, serverIp, username, data.password(), data.command());
-                    if (success) {
-                        PasswordManager.savePassword(serverIp, username, data.password(), data.command(), true, existingId != null ? existingId : "");
-                        if (existingId != null) updated++;
+                    String assignedId = createOrUpdateBitwardenItem(existingId, serverIp, username, data.password(), data.command());
+                    if (assignedId != null) {
+                        existingItemIds.put(key, assignedId);
+                        if (existingId != null && !existingId.isBlank()) updated++;
                         else created++;
                     }
                 }
@@ -683,6 +688,7 @@ public class BitwardenManager {
 
     public static String findBitwardenItemId(String serverIp, String username) {
         try {
+            executeBwCommand("sync");
             BwResult listResult = executeBwCommand("list", "items");
             if (listResult != null && listResult.exitCode() == 0 && !listResult.output().isBlank()) {
                 JsonElement parsed = JsonParser.parseString(listResult.output());
@@ -733,7 +739,12 @@ public class BitwardenManager {
                 if (remoteId == null || remoteId.isBlank()) {
                     remoteId = findBitwardenItemId(serverIp, username);
                 }
-                return createOrUpdateBitwardenItem(remoteId, serverIp, username, password, command);
+                String assignedId = createOrUpdateBitwardenItem(remoteId, serverIp, username, password, command);
+                if (assignedId != null) {
+                    executeBwCommand("sync");
+                    return true;
+                }
+                return false;
             } catch (Exception e) {
                 LOGGER.error("[SYPass] Failed background single push", e);
                 return false;
@@ -796,7 +807,7 @@ public class BitwardenManager {
         });
     }
 
-    private static boolean createOrUpdateBitwardenItem(String existingId, String serverIp, String username, String password, String command) {
+    private static String createOrUpdateBitwardenItem(String existingId, String serverIp, String username, String password, String command) {
         try {
             JsonObject item = new JsonObject();
             if (existingId != null && !existingId.isBlank()) {
@@ -827,19 +838,22 @@ public class BitwardenManager {
             }
 
             if (res != null && res.exitCode() == 0) {
+                String finalId = (existingId != null && !existingId.isBlank()) ? existingId : "";
                 try {
                     JsonObject resObj = JsonParser.parseString(res.output()).getAsJsonObject();
                     if (resObj.has("id") && !resObj.get("id").isJsonNull()) {
-                        String newId = resObj.get("id").getAsString();
-                        PasswordManager.savePassword(serverIp, username, password, command, true, newId);
+                        finalId = resObj.get("id").getAsString();
                     }
                 } catch (Exception ignored) {}
-                return true;
+                if (!finalId.isEmpty()) {
+                    PasswordManager.savePassword(serverIp, username, password, command, true, finalId);
+                }
+                return finalId;
             }
-            return false;
+            return null;
         } catch (Exception e) {
             LOGGER.error("[SYPass] Error creating/updating item in Bitwarden", e);
-            return false;
+            return null;
         }
     }
 

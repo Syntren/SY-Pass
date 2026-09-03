@@ -2,6 +2,8 @@ package com.syntren.sypass.command;
 
 import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.context.CommandContext;
+import com.syntren.sypass.config.SYPassConfig;
+import com.syntren.sypass.storage.BitwardenManager;
 import com.syntren.sypass.storage.PasswordManager;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandManager;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallback;
@@ -31,14 +33,33 @@ public class SYPassCommands {
                     .then(ClientCommandManager.literal("remove")
                             .executes(SYPassCommands::removePassword)
                     )
+                    .then(ClientCommandManager.literal("generate")
+                            .executes(context -> generatePassword(context, 16))
+                            .then(ClientCommandManager.argument("length", com.mojang.brigadier.arguments.IntegerArgumentType.integer(6, 64))
+                                    .executes(context -> generatePassword(context, com.mojang.brigadier.arguments.IntegerArgumentType.getInteger(context, "length")))
+                            )
+                    )
             );
         });
+    }
+
+    private static int generatePassword(CommandContext<FabricClientCommandSource> context, int length) {
+        String generated = com.syntren.sypass.util.PasswordGenerator.generate(length);
+        if (context.getSource().getClient() != null && context.getSource().getClient().keyboard != null) {
+            context.getSource().getClient().keyboard.setClipboard(generated);
+        }
+        context.getSource().sendFeedback(Text.translatable("sypass.command.generated", generated));
+        com.syntren.sypass.gui.SYPassToast.show(
+                Text.translatable("sypass.toast.generator.title"),
+                Text.translatable("sypass.toast.generator.desc")
+        );
+        return 1;
     }
 
     private static int savePassword(CommandContext<FabricClientCommandSource> context, String password, String command) {
         ServerInfo server = context.getSource().getClient().getCurrentServerEntry();
         if (server == null) {
-            context.getSource().sendError(Text.literal("§c[SY-Pass] Цю команду можна виконувати лише під час гри на сервері!"));
+            context.getSource().sendError(Text.translatable("sypass.command.server_only"));
             return 0;
         }
 
@@ -52,22 +73,36 @@ public class SYPassCommands {
 
         String serverIp = server.address;
         PasswordManager.savePassword(serverIp, username, cleanPassword, cleanCommand);
-        context.getSource().sendFeedback(Text.literal("§a[SY-Pass] Збережено пароль для акаунта §e" + username + " §aна сервері " + serverIp + "!"));
+
+        if (SYPassConfig.isAutoSyncEnabled() && BitwardenManager.hasActiveSession()) {
+            BitwardenManager.pushSingleItemAsync(serverIp, username, cleanPassword, cleanCommand);
+        }
+
+        context.getSource().sendFeedback(Text.translatable("sypass.command.saved", username, serverIp));
         return 1;
     }
 
     private static int removePassword(CommandContext<FabricClientCommandSource> context) {
         ServerInfo server = context.getSource().getClient().getCurrentServerEntry();
         if (server == null) {
-            context.getSource().sendError(Text.literal("§c[SY-Pass] Цю команду можна виконувати лише під час гри на сервері!"));
+            context.getSource().sendError(Text.translatable("sypass.command.server_only"));
             return 0;
         }
 
         String username = context.getSource().getClient().getSession().getUsername();
         String serverIp = server.address;
 
+        PasswordManager.AccountData acc = PasswordManager.getPassword(serverIp, username);
+        String remoteId = (acc != null) ? acc.remoteId() : "";
+        boolean wasSynced = (acc != null && acc.isSynced());
+
         PasswordManager.removePassword(serverIp, username);
-        context.getSource().sendFeedback(Text.literal("§e[SY-Pass] Пароль для акаунта §e" + username + " §eна сервері " + serverIp + " видалено."));
+
+        if (wasSynced && SYPassConfig.isAutoSyncEnabled() && BitwardenManager.hasActiveSession()) {
+            BitwardenManager.deleteSingleItemAsync(serverIp, username, remoteId);
+        }
+
+        context.getSource().sendFeedback(Text.translatable("sypass.command.removed", username, serverIp));
         return 1;
     }
 }

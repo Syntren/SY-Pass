@@ -1,18 +1,28 @@
 package com.syntren.sypass.gui;
 
+import com.syntren.sypass.config.SYPassConfig;
+import com.syntren.sypass.storage.BitwardenManager;
 import com.syntren.sypass.storage.PasswordManager;
+import io.wispforest.owo.ui.base.BaseOwoScreen;
+import io.wispforest.owo.ui.component.ButtonComponent;
+import io.wispforest.owo.ui.component.Components;
+import io.wispforest.owo.ui.component.LabelComponent;
+import io.wispforest.owo.ui.component.TextBoxComponent;
+import io.wispforest.owo.ui.container.Containers;
+import io.wispforest.owo.ui.container.FlowLayout;
+import io.wispforest.owo.ui.core.*;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
-import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.gui.screen.Screen;
-import net.minecraft.client.gui.widget.ButtonWidget;
-import net.minecraft.client.gui.widget.TextFieldWidget;
 import net.minecraft.client.network.ServerInfo;
+import net.minecraft.text.OrderedText;
+import net.minecraft.text.Style;
 import net.minecraft.text.Text;
+import net.minecraft.util.Formatting;
+import org.jetbrains.annotations.NotNull;
 
 @Environment(EnvType.CLIENT)
-public class EditPasswordScreen extends Screen {
-
+public class EditPasswordScreen extends BaseOwoScreen<FlowLayout> {
 
     private final Screen parent;
     private final boolean isEditing;
@@ -20,39 +30,41 @@ public class EditPasswordScreen extends Screen {
     private final String initialUsername;
     private final String initialPassword;
     private final String initialCommand;
+    private boolean syncWithBitwarden;
 
-    private TextFieldWidget serverIpField;
-    private TextFieldWidget usernameField;
-    private TextFieldWidget passwordField;
-    private TextFieldWidget commandField;
-
-    private String errorMessage = "";
+    private TextBoxComponent serverIpField;
+    private TextBoxComponent usernameField;
+    private TextBoxComponent passwordField;
+    private TextBoxComponent commandField;
+    private LabelComponent errorLabel;
+    private boolean showPassword = true;
 
     public EditPasswordScreen(Screen parent) {
-        this(parent, "", "", "", "/login");
+        this(parent, "", "", "", "/login", true);
     }
 
-    public EditPasswordScreen(Screen parent, String serverIp, String username, String password, String command) {
-        super(Text.literal((serverIp != null && !serverIp.isBlank()) ? "Редагування пароля" : "Додати новий пароль"));
+    public EditPasswordScreen(Screen parent, String serverIp, String username, String password, String command, boolean isSynced) {
+        super(Text.translatable((serverIp != null && !serverIp.isBlank()) ? "sypass.gui.edit.title.edit" : "sypass.gui.edit.title.add"));
         this.parent = parent;
         this.isEditing = (serverIp != null && !serverIp.isBlank());
         this.initialServerIp = serverIp != null ? serverIp : "";
         this.initialUsername = username != null ? username : "";
         this.initialPassword = password != null ? password : "";
         this.initialCommand = (command != null && !command.isBlank()) ? command : "/login";
+        this.syncWithBitwarden = isSynced;
     }
 
     @Override
-    protected void init() {
-        super.init();
-        this.clearChildren();
+    protected @NotNull OwoUIAdapter<FlowLayout> createAdapter() {
+        return OwoUIAdapter.create(this, Containers::verticalFlow);
+    }
 
-        int centerX = this.width / 2;
-        int fieldWidth = 260;
-        int startX = centerX - fieldWidth / 2;
-        int startY = Math.max(30, this.height / 2 - 95);
+    @Override
+    protected void build(FlowLayout rootComponent) {
+        rootComponent.surface(Surface.VANILLA_TRANSLUCENT);
+        rootComponent.horizontalAlignment(HorizontalAlignment.CENTER);
+        rootComponent.verticalAlignment(VerticalAlignment.CENTER);
 
-        // 1. Поле IP сервера
         String defaultServer = initialServerIp;
         if (defaultServer.isEmpty() && this.client != null) {
             ServerInfo currentServer = this.client.getCurrentServerEntry();
@@ -60,52 +72,142 @@ public class EditPasswordScreen extends Screen {
                 defaultServer = currentServer.address;
             }
         }
-        this.serverIpField = new TextFieldWidget(this.textRenderer, startX, startY + 14, fieldWidth, 20, Text.literal("IP Сервера"));
-        this.serverIpField.setMaxLength(256);
-        this.serverIpField.setText(defaultServer);
-        this.serverIpField.setPlaceholder(Text.literal("mc.example.com або 127.0.0.1:25565"));
-        this.addSelectableChild(this.serverIpField);
 
-        // 2. Поле нікнейму
         String defaultUser = initialUsername;
         if (defaultUser.isEmpty() && this.client != null && this.client.getSession() != null) {
             defaultUser = this.client.getSession().getUsername();
         }
-        this.usernameField = new TextFieldWidget(this.textRenderer, startX, startY + 52, fieldWidth, 20, Text.literal("Нікнейм"));
+
+        int cardWidth = Math.min(360, this.width - 30);
+        FlowLayout card = Containers.verticalFlow(Sizing.fixed(cardWidth), Sizing.content());
+        card.gap(6);
+        card.horizontalAlignment(HorizontalAlignment.CENTER);
+        card.surface(Surface.PANEL);
+        card.padding(Insets.of(12));
+
+        card.child(Components.label(this.title).shadow(true).margins(Insets.bottom(4)));
+
+        // 1. IP Сервера
+        card.child(Components.label(Text.translatable("sypass.gui.edit.server").formatted(Formatting.GRAY))
+                .horizontalSizing(Sizing.fill(100)));
+        this.serverIpField = Components.textBox(Sizing.fill(100));
+        this.serverIpField.setMaxLength(256);
+        this.serverIpField.setText(defaultServer);
+        this.serverIpField.setCursor(0, false);
+        this.serverIpField.setPlaceholder(Text.literal("mc.example.com / 127.0.0.1:25565"));
+        card.child(this.serverIpField);
+
+        // 2. Нікнейм
+        card.child(Components.label(Text.translatable("sypass.gui.edit.username").formatted(Formatting.GRAY))
+                .horizontalSizing(Sizing.fill(100)));
+        this.usernameField = Components.textBox(Sizing.fill(100));
         this.usernameField.setMaxLength(256);
         this.usernameField.setText(defaultUser);
+        this.usernameField.setCursor(0, false);
         this.usernameField.setPlaceholder(Text.literal("PlayerName"));
-        this.addSelectableChild(this.usernameField);
+        card.child(this.usernameField);
 
-        // 3. Поле пароля
-        this.passwordField = new TextFieldWidget(this.textRenderer, startX, startY + 90, fieldWidth, 20, Text.literal("Пароль"));
+        // 3. Пароль
+        card.child(Components.label(Text.translatable("sypass.gui.edit.password").formatted(Formatting.GRAY))
+                .horizontalSizing(Sizing.fill(100)));
+
+        FlowLayout passRow = Containers.horizontalFlow(Sizing.fill(100), Sizing.fixed(20));
+        passRow.gap(4);
+
+        this.passwordField = Components.textBox(Sizing.fixed(cardWidth - 84));
         this.passwordField.setMaxLength(256);
         this.passwordField.setText(initialPassword);
-        this.passwordField.setPlaceholder(Text.literal("Ваш пароль до сервера"));
-        this.addSelectableChild(this.passwordField);
+        this.passwordField.setCursor(0, false);
+        this.passwordField.setPlaceholder(Text.translatable("sypass.gui.edit.password"));
+        applyPasswordMask(this.passwordField, showPassword);
 
-        // 4. Поле команди
-        this.commandField = new TextFieldWidget(this.textRenderer, startX, startY + 128, fieldWidth, 20, Text.literal("Команда"));
+        ButtonComponent togglePassBtn = Components.button(Text.literal(showPassword ? "§a●" : "§7○"), b -> {
+            showPassword = !showPassword;
+            b.setMessage(Text.literal(showPassword ? "§a●" : "§7○"));
+            b.tooltip(Text.translatable(showPassword ? "sypass.gui.button.hide" : "sypass.gui.button.show"));
+            applyPasswordMask(this.passwordField, showPassword);
+        });
+        togglePassBtn.horizontalSizing(Sizing.fixed(25));
+        togglePassBtn.tooltip(Text.translatable(showPassword ? "sypass.gui.button.hide" : "sypass.gui.button.show"));
+
+        ButtonComponent generateBtn = Components.button(Text.literal("🎲"), b -> {
+            String gen = com.syntren.sypass.util.PasswordGenerator.generateDefault();
+            this.passwordField.setText(gen);
+            if (this.client != null && this.client.keyboard != null) {
+                this.client.keyboard.setClipboard(gen);
+            }
+            this.errorLabel.color(Color.ofRgb(0x55FF55));
+            this.errorLabel.text(Text.translatable("sypass.gui.edit.generated_copied"));
+        });
+        generateBtn.horizontalSizing(Sizing.fixed(25));
+        generateBtn.tooltip(Text.translatable("sypass.gui.button.generate.tooltip"));
+
+        passRow.child(this.passwordField);
+        passRow.child(togglePassBtn);
+        passRow.child(generateBtn);
+        card.child(passRow);
+
+        // 4. Команда
+        card.child(Components.label(Text.translatable("sypass.gui.edit.command").formatted(Formatting.GRAY))
+                .horizontalSizing(Sizing.fill(100)));
+        this.commandField = Components.textBox(Sizing.fill(100));
         this.commandField.setMaxLength(256);
         this.commandField.setText(initialCommand);
+        this.commandField.setCursor(0, false);
         this.commandField.setPlaceholder(Text.literal("/login"));
-        this.addSelectableChild(this.commandField);
+        card.child(this.commandField);
+
+        // Перемикач синхронізації з Bitwarden
+        ButtonComponent syncToggleBtn = Components.button(
+                Text.literal(syncWithBitwarden ? "§a☁ " : "§7☁ ").append(Text.translatable("sypass.gui.sync.toggle")),
+                b -> {
+                    syncWithBitwarden = !syncWithBitwarden;
+                    b.setMessage(Text.literal(syncWithBitwarden ? "§a☁ " : "§7☁ ").append(Text.translatable("sypass.gui.sync.toggle")));
+                }
+        );
+        syncToggleBtn.horizontalSizing(Sizing.fill(100));
+        card.child(syncToggleBtn);
+
+        // Повідомлення про помилку
+        this.errorLabel = Components.label(Text.empty());
+        this.errorLabel.color(Color.ofRgb(0xFF5555));
+        this.errorLabel.shadow(true);
+        this.errorLabel.margins(Insets.vertical(2));
+        card.child(this.errorLabel);
 
         // Кнопки "Зберегти" та "Скасувати"
-        int btnWidth = 125;
-        this.addDrawableChild(ButtonWidget.builder(Text.literal("💾 Зберегти"), b -> saveAndClose())
-                .dimensions(startX, startY + 158, btnWidth, 20).build());
+        FlowLayout buttonRow = Containers.horizontalFlow(Sizing.fill(100), Sizing.fixed(20));
+        buttonRow.gap(8);
+        buttonRow.horizontalAlignment(HorizontalAlignment.CENTER);
 
-        this.addDrawableChild(ButtonWidget.builder(Text.literal("❌ Скасувати"), b -> close())
-                .dimensions(startX + fieldWidth - btnWidth, startY + 158, btnWidth, 20).build());
+        int btnWidth = (cardWidth - 32) / 2;
 
-        // Встановлюємо фокус на відповідне поле
-        if (serverIpField.getText().isEmpty()) {
-            this.setFocused(serverIpField);
-        } else if (passwordField.getText().isEmpty()) {
-            this.setFocused(passwordField);
+        ButtonComponent saveBtn = Components.button(Text.translatable("sypass.gui.button.save"), b -> saveAndClose());
+        saveBtn.horizontalSizing(Sizing.fixed(btnWidth));
+
+        ButtonComponent cancelBtn = Components.button(Text.translatable("sypass.gui.button.cancel"), b -> close());
+        cancelBtn.horizontalSizing(Sizing.fixed(btnWidth));
+
+        buttonRow.child(saveBtn);
+        buttonRow.child(cancelBtn);
+        card.child(buttonRow);
+
+        rootComponent.child(card);
+
+        if (this.serverIpField.getText().isEmpty()) {
+            this.serverIpField.setFocused(true);
+        } else if (this.passwordField.getText().isEmpty()) {
+            this.passwordField.setFocused(true);
         } else {
-            this.setFocused(usernameField);
+            this.usernameField.setFocused(true);
+        }
+    }
+
+    private void applyPasswordMask(TextBoxComponent field, boolean show) {
+        if (show) {
+            field.setRenderTextProvider((text, index) -> OrderedText.styledForwardsVisitedString(text, Style.EMPTY));
+        } else {
+            field.setRenderTextProvider((text, index) -> OrderedText.styledForwardsVisitedString("•".repeat(text.length()), Style.EMPTY));
         }
     }
 
@@ -116,59 +218,44 @@ public class EditPasswordScreen extends Screen {
         String cmd = this.commandField.getText().trim();
 
         if (server.isEmpty()) {
-            this.errorMessage = "§cВкажіть IP або назву сервера!";
+            this.errorLabel.text(Text.translatable("sypass.gui.edit.error.server"));
             return;
         }
         if (user.isEmpty()) {
-            this.errorMessage = "§cВкажіть нікнейм гравця!";
+            this.errorLabel.text(Text.translatable("sypass.gui.edit.error.user"));
             return;
         }
         if (pass.isEmpty()) {
-            this.errorMessage = "§cВведіть пароль!";
+            this.errorLabel.text(Text.translatable("sypass.gui.edit.error.pass"));
             return;
         }
 
-        // Якщо редагували та змінили сервер/нік — видаляємо старий запис
+        PasswordManager.AccountData currentAcc = isEditing ? PasswordManager.getPassword(initialServerIp, initialUsername) : null;
+        String currentRemoteId = (currentAcc != null) ? currentAcc.remoteId() : "";
+
         if (isEditing && (!initialServerIp.equalsIgnoreCase(server) || !initialUsername.equalsIgnoreCase(user))) {
             PasswordManager.removePassword(initialServerIp, initialUsername);
+            if (SYPassConfig.isAutoSyncEnabled() && BitwardenManager.hasActiveSession()) {
+                BitwardenManager.deleteSingleItemAsync(initialServerIp, initialUsername, currentRemoteId);
+            }
+            currentRemoteId = "";
+        } else if (isEditing && !syncWithBitwarden && currentAcc != null && currentAcc.isSynced() && BitwardenManager.hasActiveSession()) {
+            BitwardenManager.deleteFromBitwardenOnlyAsync(initialServerIp, initialUsername, currentRemoteId);
+            currentRemoteId = "";
         }
 
-        PasswordManager.savePassword(server, user, pass, cmd.isEmpty() ? "/login" : cmd);
+        PasswordManager.savePassword(server, user, pass, cmd.isEmpty() ? "/login" : cmd, syncWithBitwarden, currentRemoteId);
+
+        if (syncWithBitwarden && SYPassConfig.isAutoSyncEnabled() && BitwardenManager.hasActiveSession()) {
+            BitwardenManager.pushSingleItemAsync(server, user, pass, cmd.isEmpty() ? "/login" : cmd);
+        }
 
         if (this.parent instanceof SYPassScreen sypassScreen) {
-            sypassScreen.setStatusMessage("§aЗбережено пароль для §e" + user + " §a(" + server + ")");
+            sypassScreen.setStatusMessage(Text.translatable("sypass.gui.edit.saved", user, server).getString());
             sypassScreen.refreshPasswordList();
         }
 
         this.close();
-    }
-
-    @Override
-    public void render(DrawContext context, int mouseX, int mouseY, float delta) {
-        super.render(context, mouseX, mouseY, delta);
-
-        int centerX = this.width / 2;
-        int fieldWidth = 260;
-        int startX = centerX - fieldWidth / 2;
-        int startY = Math.max(30, this.height / 2 - 95);
-
-        context.drawCenteredTextWithShadow(this.textRenderer, this.title, centerX, startY - 16, 0xFFFFFF);
-
-        context.drawTextWithShadow(this.textRenderer, "IP / Назва сервера:", startX, startY + 3, 0xAAAAAA);
-        if (serverIpField != null) serverIpField.render(context, mouseX, mouseY, delta);
-
-        context.drawTextWithShadow(this.textRenderer, "Нікнейм:", startX, startY + 41, 0xAAAAAA);
-        if (usernameField != null) usernameField.render(context, mouseX, mouseY, delta);
-
-        context.drawTextWithShadow(this.textRenderer, "Пароль:", startX, startY + 79, 0xAAAAAA);
-        if (passwordField != null) passwordField.render(context, mouseX, mouseY, delta);
-
-        context.drawTextWithShadow(this.textRenderer, "Команда авторизації:", startX, startY + 117, 0xAAAAAA);
-        if (commandField != null) commandField.render(context, mouseX, mouseY, delta);
-
-        if (!errorMessage.isEmpty()) {
-            context.drawCenteredTextWithShadow(this.textRenderer, errorMessage, centerX, startY + 185, 0xFF5555);
-        }
     }
 
     @Override

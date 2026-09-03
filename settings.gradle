@@ -4,25 +4,9 @@ pluginManagement {
 			name = 'Fabric'
 			url = 'https://maven.fabricmc.net/'
 		}
-		maven {
-			name = 'KikuGie Maven'
-			url = 'https://maven.kikugie.dev/releases'
-		}
 		mavenCentral()
 		gradlePluginPortal()
 	}
 }
 
-plugins {
-	id 'dev.kikugie.stonecutter' version 'latest.release'
-}
-
-stonecutter {
-	// ...
-	// Configuration goes here
-	create(getRootProject()) {
-		versions '1.21.1', '1.21.11'
-	}
-}
-// Should match your modid
 rootProject.name = 'sypass'

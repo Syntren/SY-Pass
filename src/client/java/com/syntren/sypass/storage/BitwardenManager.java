@@ -9,26 +9,39 @@ import net.fabricmc.loader.api.FabricLoader;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.io.BufferedReader;
-import java.io.File;
-import java.io.InputStreamReader;
+import java.io.*;
+import java.net.HttpURLConnection;
+import java.net.URI;
+import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.ArrayList;
-import java.util.Base64;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.nio.file.attribute.PosixFilePermission;
+import java.nio.file.attribute.PosixFilePermissions;
+import java.util.*;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipInputStream;
 
 public class BitwardenManager {
     private static final Logger LOGGER = LoggerFactory.getLogger("SYPass");
     private static final Gson GSON = new Gson();
     private static String sessionKey = "";
-    private static final Path CONFIG_DIR = FabricLoader.getInstance().getConfigDir().resolve("sypass");
-    private static final boolean IS_WINDOWS = System.getProperty("os.name").toLowerCase().contains("win");
-    private static final Path LOCAL_CLI_PATH = CONFIG_DIR.resolve(IS_WINDOWS ? "bw.exe" : "bw");
+    public static final Path CONFIG_DIR = FabricLoader.getInstance().getConfigDir().resolve("sypass");
+    public static final boolean IS_WINDOWS = System.getProperty("os.name").toLowerCase().contains("win");
+    public static final boolean IS_MAC = System.getProperty("os.name").toLowerCase().contains("mac") || System.getProperty("os.name").toLowerCase().contains("darwin");
+    public static final Path LOCAL_CLI_PATH = CONFIG_DIR.resolve(IS_WINDOWS ? "bw.exe" : "bw");
+
+    private static BwStatusInfo cachedStatus = null;
+    private static long lastStatusQueryMs = 0;
+    private static final long STATUS_CACHE_TTL_MS = 10000;
+
+    public interface DownloadProgressListener {
+        void onProgress(float progress, long downloadedBytes, long totalBytes, String statusText);
+        void onSuccess();
+        void onError(String errorMessage);
+    }
 
     public record BwResult(int exitCode, String output) {}
 
@@ -47,7 +60,7 @@ public class BitwardenManager {
         }
     }
 
-    public record BwStatusInfo(boolean isInstalled, String cliPath, String status, String userEmail, String serverUrl) {
+    public record BwStatusInfo(boolean isInstalled, boolean isLocal, String cliPath, String status, String userEmail, String serverUrl) {
         public boolean isUnlocked() {
             return "unlocked".equalsIgnoreCase(status);
         }
@@ -62,7 +75,15 @@ public class BitwardenManager {
     public record BwSyncResult(boolean success, int count, String message) {}
 
     public static void setSessionKey(String key) {
+        setSessionKey(key, true);
+    }
+
+    public static void setSessionKey(String key, boolean saveToDisk) {
         sessionKey = key != null ? key.trim() : "";
+        invalidateStatusCache();
+        if (saveToDisk) {
+            PasswordManager.saveBwSession(sessionKey);
+        }
     }
 
     public static String getSessionKey() {
@@ -73,16 +94,148 @@ public class BitwardenManager {
         return sessionKey != null && !sessionKey.isBlank();
     }
 
-    /**
-     * Знаходить шлях до виконуваного файлу Bitwarden CLI (bw).
-     */
+    public static void invalidateStatusCache() {
+        lastStatusQueryMs = 0;
+    }
+
+    public static boolean isLocalCliInstalled() {
+        return Files.exists(LOCAL_CLI_PATH) && (IS_WINDOWS || Files.isExecutable(LOCAL_CLI_PATH));
+    }
+
+    public static boolean deleteLocalCli() {
+        logout();
+        invalidateStatusCache();
+        try {
+            return Files.deleteIfExists(LOCAL_CLI_PATH);
+        } catch (Exception e) {
+            LOGGER.error("[SYPass] Failed to delete local CLI", e);
+            return false;
+        }
+    }
+
+    public static String getDownloadUrlForCurrentPlatform() {
+        if (IS_WINDOWS) {
+            return "https://bitwarden.com/download/?app=cli&platform=windows";
+        } else if (IS_MAC) {
+            return "https://bitwarden.com/download/?app=cli&platform=macos";
+        } else {
+            return "https://bitwarden.com/download/?app=cli&platform=linux";
+        }
+    }
+
+    public static void downloadAndInstallCliAsync(DownloadProgressListener listener) {
+        new Thread(() -> {
+            File tempZip = CONFIG_DIR.resolve("bw_temp.zip").toFile();
+            try {
+                if (!Files.exists(CONFIG_DIR)) {
+                    Files.createDirectories(CONFIG_DIR);
+                }
+
+                String downloadUrl = getDownloadUrlForCurrentPlatform();
+                listener.onProgress(0.05f, 0, -1, "З'єднання з сервером Bitwarden...");
+
+                URL url = URI.create(downloadUrl).toURL();
+                HttpURLConnection connection = null;
+                int redirects = 0;
+                while (redirects < 6) {
+                    connection = (HttpURLConnection) url.openConnection();
+                    connection.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36");
+                    connection.setConnectTimeout(15000);
+                    connection.setReadTimeout(30000);
+                    connection.setInstanceFollowRedirects(true);
+                    int status = connection.getResponseCode();
+                    if (status == HttpURLConnection.HTTP_MOVED_TEMP || status == HttpURLConnection.HTTP_MOVED_PERM || status == 307 || status == 308) {
+                        String newUrl = connection.getHeaderField("Location");
+                        url = URI.create(newUrl).toURL();
+                        redirects++;
+                    } else {
+                        break;
+                    }
+                }
+
+                if (connection == null) {
+                    throw new IOException("Не вдалося встановити HTTP-з'єднання з " + downloadUrl);
+                }
+
+                long totalBytes = connection.getContentLengthLong();
+                long downloadedBytes = 0;
+
+                try (InputStream in = new BufferedInputStream(connection.getInputStream(), 65536);
+                     OutputStream out = new BufferedOutputStream(new FileOutputStream(tempZip), 65536)) {
+                    byte[] buffer = new byte[65536];
+                    int bytesRead;
+                    while ((bytesRead = in.read(buffer)) != -1) {
+                        out.write(buffer, 0, bytesRead);
+                        downloadedBytes += bytesRead;
+                        float progress = totalBytes > 0 ? (float) downloadedBytes / totalBytes : 0.5f;
+                        listener.onProgress(Math.min(0.90f, progress), downloadedBytes, totalBytes, "Завантаження архіву Bitwarden CLI...");
+                    }
+                    out.flush();
+                }
+
+                listener.onProgress(0.92f, downloadedBytes, totalBytes, "Розпакування архіву...");
+
+                boolean extracted = false;
+                try (ZipInputStream zis = new ZipInputStream(new BufferedInputStream(new FileInputStream(tempZip), 65536))) {
+                    ZipEntry entry;
+                    while ((entry = zis.getNextEntry()) != null) {
+                        String name = entry.getName();
+                        if (name.equals("bw") || name.equals("bw.exe") || name.endsWith("/bw") || name.endsWith("/bw.exe")) {
+                            try (BufferedOutputStream fos = new BufferedOutputStream(new FileOutputStream(LOCAL_CLI_PATH.toFile()), 65536)) {
+                                byte[] buf = new byte[65536];
+                                int len;
+                                while ((len = zis.read(buf)) != -1) {
+                                    fos.write(buf, 0, len);
+                                }
+                                fos.flush();
+                            }
+                            extracted = true;
+                            break;
+                        }
+                    }
+                }
+
+                tempZip.delete();
+
+                if (!extracted) {
+                    listener.onError("Не знайдено виконуваний файл 'bw' всередині завантаженого архіву.");
+                    return;
+                }
+
+                if (!IS_WINDOWS) {
+                    File cliFile = LOCAL_CLI_PATH.toFile();
+                    cliFile.setExecutable(true, false);
+                    cliFile.setReadable(true, false);
+                    cliFile.setWritable(true, true);
+                    try {
+                        Set<PosixFilePermission> perms = PosixFilePermissions.fromString("rwxr-xr-x");
+                        Files.setPosixFilePermissions(LOCAL_CLI_PATH, perms);
+                    } catch (Exception ignored) {}
+                }
+
+                invalidateStatusCache();
+                listener.onProgress(0.98f, downloadedBytes, totalBytes, "Перевірка запуску CLI...");
+
+                if (isCliInstalled()) {
+                    listener.onProgress(1.0f, downloadedBytes, totalBytes, "Успішно встановлено!");
+                    listener.onSuccess();
+                } else {
+                    listener.onError("Файл завантажено, але не вдалося запустити Bitwarden CLI.");
+                }
+
+            } catch (Exception e) {
+                LOGGER.error("[SYPass] Error downloading Bitwarden CLI", e);
+                tempZip.delete();
+                listener.onError("Помилка завантаження: " + e.getMessage());
+            }
+        }).start();
+    }
+
     public static String getCliExecutable() {
-        // 1. Локальний файл у config/sypass/
-        if (Files.exists(LOCAL_CLI_PATH) && Files.isExecutable(LOCAL_CLI_PATH)) {
+        if (isLocalCliInstalled()) {
             return LOCAL_CLI_PATH.toAbsolutePath().toString();
         }
 
-        // 2. Типові шляхи у системі
         String userHome = System.getProperty("user.home", "");
         List<Path> candidatePaths = new ArrayList<>();
 
@@ -111,7 +264,6 @@ public class BitwardenManager {
             }
         }
 
-        // Пошук у NVM директоріях (Linux/macOS)
         if (!IS_WINDOWS && !userHome.isBlank()) {
             Path nvmDir = Path.of(userHome, ".nvm/versions/node");
             if (Files.exists(nvmDir) && Files.isDirectory(nvmDir)) {
@@ -129,60 +281,53 @@ public class BitwardenManager {
             }
         }
 
-        // 3. Стандартний виклик з PATH
         return IS_WINDOWS ? "bw.cmd" : "bw";
     }
 
-    /**
-     * Перевіряє чи доступний Bitwarden CLI.
-     */
     public static boolean isCliInstalled() {
-        try {
-            BwResult res = executeBwCommand("--version");
-            return res != null && res.exitCode() == 0 && !res.output().isBlank();
-        } catch (Exception e) {
-            return false;
-        }
+        if (isLocalCliInstalled()) return true;
+        if (cachedStatus != null) return cachedStatus.isInstalled();
+        String exe = getCliExecutable();
+        return !exe.equals("bw") && !exe.equals("bw.cmd");
     }
 
-    /**
-     * Отримує статус Bitwarden CLI (bw status).
-     */
-    public static BwStatusInfo getStatusInfo() {
+    public static synchronized BwStatusInfo getStatusInfo() {
+        long now = System.currentTimeMillis();
+        if (cachedStatus != null && (now - lastStatusQueryMs < STATUS_CACHE_TTL_MS)) {
+            return cachedStatus;
+        }
+
         String cliPath = getCliExecutable();
+        boolean local = isLocalCliInstalled();
         try {
             BwResult result = executeBwCommand("status");
             if (result == null || result.exitCode() != 0 || result.output().isBlank()) {
-                return new BwStatusInfo(false, cliPath, "not_found", "", "");
-            }
-
-            JsonElement parsed = JsonParser.parseString(result.output());
-            if (parsed.isJsonObject()) {
-                JsonObject obj = parsed.getAsJsonObject();
-                String status = obj.has("status") && !obj.get("status").isJsonNull() ? obj.get("status").getAsString() : "unknown";
-                String userEmail = obj.has("userEmail") && !obj.get("userEmail").isJsonNull() ? obj.get("userEmail").getAsString() : "";
-                String serverUrl = obj.has("serverUrl") && !obj.get("serverUrl").isJsonNull() ? obj.get("serverUrl").getAsString() : "";
-                return new BwStatusInfo(true, cliPath, status, userEmail, serverUrl);
+                cachedStatus = new BwStatusInfo(false, local, cliPath, "not_found", "", "");
+            } else {
+                JsonElement parsed = JsonParser.parseString(result.output());
+                if (parsed.isJsonObject()) {
+                    JsonObject obj = parsed.getAsJsonObject();
+                    String status = obj.has("status") && !obj.get("status").isJsonNull() ? obj.get("status").getAsString() : "unknown";
+                    String userEmail = obj.has("userEmail") && !obj.get("userEmail").isJsonNull() ? obj.get("userEmail").getAsString() : "";
+                    String serverUrl = obj.has("serverUrl") && !obj.get("serverUrl").isJsonNull() ? obj.get("serverUrl").getAsString() : "";
+                    cachedStatus = new BwStatusInfo(true, local, cliPath, status, userEmail, serverUrl);
+                } else {
+                    cachedStatus = new BwStatusInfo(false, local, cliPath, "error", "", "");
+                }
             }
         } catch (Exception e) {
             LOGGER.debug("[SYPass] Error querying bw status", e);
+            cachedStatus = new BwStatusInfo(false, local, cliPath, "error", "", "");
         }
-        return new BwStatusInfo(false, cliPath, "error", "", "");
+
+        lastStatusQueryMs = now;
+        return cachedStatus;
     }
 
-    /**
-     * Встановлює кастомну адресу сервера (Self-hosted або EU Vault).
-     */
-    public static boolean setServerUrl(String url) {
-        if (url == null || url.isBlank()) return false;
-        BwResult result = executeBwCommand("config", "server", url.trim());
-        return result != null && result.exitCode() == 0;
+    public static BwLoginResponse login(String email, String password, String otp) {
+        return login(email, password, otp, null);
     }
 
-    /**
-     * Авторизація у Bitwarden за логіном/паролем або розблокування сховища.
-     * method: "1" = Email, "0" = Authenticator (TOTP), "2" = Duo, "3" = YubiKey
-     */
     public static BwLoginResponse login(String email, String password, String otp, String method) {
         if (email == null || email.isBlank() || password == null || password.isBlank()) {
             return new BwLoginResponse(LoginStatus.ERROR, "Введіть Email та майстер-пароль!", "");
@@ -190,129 +335,147 @@ public class BitwardenManager {
 
         email = email.trim();
         password = password.trim();
-        String selectedMethod = (method != null && !method.isBlank()) ? method : "1"; // За замовчуванням Email (1)
 
-        // 1. Перевіряємо статус CLI
         BwStatusInfo statusInfo = getStatusInfo();
         if (!statusInfo.isInstalled()) {
-            return new BwLoginResponse(LoginStatus.CLI_NOT_FOUND,
-                    "Bitwarden CLI (bw) не знайдено в системі! Встановіть 'npm i -g @bitwarden/cli' або завантажте у config/sypass/bw", "");
+            return new BwLoginResponse(LoginStatus.CLI_NOT_FOUND, "Bitwarden CLI (bw) не знайдено в системі!", "");
         }
 
         try {
-            // 2. Якщо вже залогінені під цим email і сховище заблоковане -> робимо unlock
-            if (statusInfo.isLocked() && (statusInfo.userEmail().equalsIgnoreCase(email) || statusInfo.userEmail().isEmpty())) {
-                LOGGER.info("[SYPass] Vault is locked. Attempting unlock for {}", email);
+            if (statusInfo.isLocked() && statusInfo.userEmail().equalsIgnoreCase(email)) {
+                LOGGER.info("[SYPass] Attempting unlock for {}", email);
                 BwResult unlockResult = executeBwCommand("unlock", password, "--raw");
                 if (unlockResult != null && unlockResult.exitCode() == 0 && isValidSessionKey(unlockResult.output())) {
-                    sessionKey = unlockResult.output().trim();
-                    LOGGER.info("[SYPass] Unlock successful!");
+                    setSessionKey(unlockResult.output().trim());
                     return new BwLoginResponse(LoginStatus.SUCCESS, "Сховище успішно розблоковано!", sessionKey);
-                } else if (unlockResult != null && unlockResult.output().toLowerCase().contains("invalid")) {
-                    return new BwLoginResponse(LoginStatus.INVALID_PASSWORD, "Невірний майстер-пароль!", "");
                 }
-            }
-
-            // Якщо залогінені під іншим акаунтом -> спочатку logout
-            if (statusInfo.isAuthenticated() && !statusInfo.userEmail().equalsIgnoreCase(email)) {
-                LOGGER.info("[SYPass] Logging out previous account: {}", statusInfo.userEmail());
+                LOGGER.info("[SYPass] Unlock failed. Resetting session to perform fresh login...");
+                executeBwCommand("logout");
+            } else if (statusInfo.isAuthenticated() && !statusInfo.userEmail().equalsIgnoreCase(email)) {
                 executeBwCommand("logout");
             }
 
-            // 3. Формуємо команду login
-            List<String> args = new ArrayList<>();
-            args.add("login");
-            args.add(email);
-            args.add(password);
-            args.add("--method");
-            args.add(selectedMethod);
-
-            if (otp != null && !otp.isBlank()) {
-                args.add("--code");
-                args.add(otp.trim());
-            }
-            args.add("--raw");
-
-            LOGGER.info("[SYPass] Initiating login for user: {}", email);
-            BwResult result = executeBwCommand(args.toArray(new String[0]));
-            if (result == null) {
-                return new BwLoginResponse(LoginStatus.ERROR, "Не вдалося запустити команду Bitwarden CLI", "");
-            }
-
-            String output = result.output().trim();
-            String lowerOutput = output.toLowerCase();
-
-            // Перевірка на необхідність 2FA
-            if (lowerOutput.contains("two-step") || lowerOutput.contains("code is required") ||
-                lowerOutput.contains("verification") || lowerOutput.contains("two-factor") ||
-                lowerOutput.contains("2fa") || lowerOutput.contains("code:")) {
-                LOGGER.info("[SYPass] Login status: NEED_OTP");
-                String promptMsg = selectedMethod.equals("1")
-                        ? "Код підтвердження надіслано на ваш Email! Введіть його нижче:"
-                        : "Введіть 2FA код з додатку автентифікації:";
-                return new BwLoginResponse(LoginStatus.NEED_OTP, promptMsg, "");
-            }
-
-            // Перевірка якщо вже залогінені
-            if (lowerOutput.contains("already logged in")) {
-                BwResult unlockRes = executeBwCommand("unlock", password, "--raw");
-                if (unlockRes != null && unlockRes.exitCode() == 0 && isValidSessionKey(unlockRes.output())) {
-                    sessionKey = unlockRes.output().trim();
-                    return new BwLoginResponse(LoginStatus.SUCCESS, "Успішний вхід та розблокування!", sessionKey);
-                } else {
-                    return new BwLoginResponse(LoginStatus.INVALID_PASSWORD, "Невірний майстер-пароль для розблокування!", "");
+            if (otp != null && !otp.isBlank() && (method == null || method.isBlank())) {
+                // If method is not explicitly given, try Authenticator app (0) first
+                BwLoginResponse res = performLogin(email, password, otp, "0");
+                if (res.isSuccess()) {
+                    return res;
                 }
+                // If method 0 failed with invalid method or provider not supported, fallback to Email (1)
+                String errMsg = res.message().toLowerCase();
+                if (errMsg.contains("invalid two-step") || errMsg.contains("no provider") || errMsg.contains("method")) {
+                    BwLoginResponse resEmail = performLogin(email, password, otp, "1");
+                    if (resEmail.isSuccess()) {
+                        return resEmail;
+                    }
+                }
+                return res;
             }
 
-            // Перевірка невірного паролю / коду
-            if (lowerOutput.contains("invalid") || result.exitCode() != 0) {
-                if (otp != null && !otp.isBlank() && (lowerOutput.contains("code") || lowerOutput.contains("token") || lowerOutput.contains("two-step"))) {
-                    return new BwLoginResponse(LoginStatus.INVALID_OTP, "Невірний 2FA код або метод!", "");
-                }
-                if (lowerOutput.contains("username or password") || lowerOutput.contains("master password") || lowerOutput.contains("credentials")) {
-                    return new BwLoginResponse(LoginStatus.INVALID_PASSWORD, "Невірний Email або майстер-пароль!", "");
-                }
-                String cleanError = output.replace("\n", " ").trim();
-                return new BwLoginResponse(LoginStatus.ERROR, cleanError.isEmpty() ? "Помилка авторизації (код " + result.exitCode() + ")" : cleanError, "");
-            }
-
-            // Успішний вхід
-            if (result.exitCode() == 0 && isValidSessionKey(output)) {
-                sessionKey = output;
-                LOGGER.info("[SYPass] Login SUCCESS!");
-                return new BwLoginResponse(LoginStatus.SUCCESS, "Успішна авторизація!", sessionKey);
-            }
+            return performLogin(email, password, otp, method);
 
         } catch (Exception e) {
             LOGGER.error("[SYPass] Exception during login", e);
             return new BwLoginResponse(LoginStatus.ERROR, "Помилка: " + e.getMessage(), "");
         }
-
-        return new BwLoginResponse(LoginStatus.ERROR, "Невідома відповідь від Bitwarden", "");
     }
 
-    /**
-     * Авторизація за допомогою API Key (Client ID + Client Secret) та наступне розблокування.
-     */
+    public static BwLoginResponse sendEmail2faCode(String email, String password) {
+        return performLogin(email, password, null, "1");
+    }
+
+    private static BwLoginResponse performLogin(String email, String password, String otp, String method) {
+        boolean hasOtp = (otp != null && !otp.isBlank());
+
+        List<String> args = new ArrayList<>();
+        args.add("login");
+        args.add(email);
+        args.add(password);
+
+        if (method != null && !method.isBlank()) {
+            args.add("--method");
+            args.add(method.trim());
+        }
+
+        if (hasOtp) {
+            args.add("--code");
+            args.add(otp.trim());
+        }
+        args.add("--raw");
+
+        LOGGER.info("[SYPass] Sending login command for: {} (hasOtp={}, method={})", email, hasOtp, method);
+        BwResult result = executeBwCommand(args.toArray(new String[0]));
+        if (result == null) {
+            return new BwLoginResponse(LoginStatus.ERROR, "Не вдалося запустити Bitwarden CLI", "");
+        }
+
+        String output = result.output().trim();
+        String lowerOutput = output.toLowerCase();
+
+        if (lowerOutput.contains("already logged in")) {
+            executeBwCommand("logout");
+            return performLogin(email, password, otp, method);
+        }
+
+        // 1. Success check
+        if (result.exitCode() == 0 && isValidSessionKey(output)) {
+            setSessionKey(output);
+            return new BwLoginResponse(LoginStatus.SUCCESS, "Успішна авторизація!", sessionKey);
+        }
+
+        // 2. If OTP was submitted, this was a verification attempt and MUST NOT loop back to NEED_OTP
+        if (hasOtp) {
+            LOGGER.warn("[SYPass] OTP verification failed: {}", output);
+            if (lowerOutput.contains("invalid") || lowerOutput.contains("code") || lowerOutput.contains("token")
+                    || lowerOutput.contains("fail") || lowerOutput.contains("incorrect")) {
+                return new BwLoginResponse(LoginStatus.INVALID_OTP, "Невірний або застарілий 2FA код! Перевірте код або виберіть інший метод.", "");
+            }
+            return new BwLoginResponse(LoginStatus.ERROR, output.replace("\n", " ").trim(), "");
+        }
+
+        // 3. Initial login without OTP: check if 2FA is needed
+        if (lowerOutput.contains("two-step") || lowerOutput.contains("code is required") ||
+                lowerOutput.contains("verification") || lowerOutput.contains("two-factor") ||
+                lowerOutput.contains("2fa") || lowerOutput.contains("code:") ||
+                lowerOutput.contains("selectedprovider") || lowerOutput.contains("provider")) {
+            String promptMsg = lowerOutput.contains("email")
+                    ? "Код підтвердження надіслано на Email! Введіть його нижче:"
+                    : "Введіть 2FA код підтвердження (з додатка Authenticator або пошти):";
+            return new BwLoginResponse(LoginStatus.NEED_OTP, promptMsg, "");
+        }
+
+        // 4. Invalid credentials check
+        if (result.exitCode() != 0 || lowerOutput.contains("invalid")) {
+            if (lowerOutput.contains("username or password") || lowerOutput.contains("master password") || lowerOutput.contains("credentials")) {
+                return new BwLoginResponse(LoginStatus.INVALID_PASSWORD, "Невірний Email або майстер-пароль!", "");
+            }
+            return new BwLoginResponse(LoginStatus.ERROR, output.replace("\n", " ").trim(), "");
+        }
+
+        return new BwLoginResponse(LoginStatus.ERROR, "Неочікувана відповідь від Bitwarden: " + output, "");
+    }
+
     public static BwLoginResponse loginWithApiKey(String clientId, String clientSecret, String masterPassword) {
         if (clientId == null || clientId.isBlank() || clientSecret == null || clientSecret.isBlank() || masterPassword == null || masterPassword.isBlank()) {
             return new BwLoginResponse(LoginStatus.ERROR, "Заповніть Client ID, Client Secret та майстер-пароль!", "");
         }
 
         try {
+            executeBwCommand("logout");
+
             Map<String, String> env = new HashMap<>();
             env.put("BW_CLIENTID", clientId.trim());
             env.put("BW_CLIENTSECRET", clientSecret.trim());
 
             BwResult loginRes = executeBwCommandWithEnv(env, "login", "--apikey");
-            if (loginRes == null || (loginRes.exitCode() != 0 && !loginRes.output().toLowerCase().contains("already logged in"))) {
+            if (loginRes == null || loginRes.exitCode() != 0) {
                 String err = loginRes != null ? loginRes.output().trim() : "Помилка запуску";
                 return new BwLoginResponse(LoginStatus.ERROR, "Помилка API Key: " + err, "");
             }
 
             BwResult unlockRes = executeBwCommand("unlock", masterPassword.trim(), "--raw");
             if (unlockRes != null && unlockRes.exitCode() == 0 && isValidSessionKey(unlockRes.output())) {
-                sessionKey = unlockRes.output().trim();
+                setSessionKey(unlockRes.output().trim());
                 return new BwLoginResponse(LoginStatus.SUCCESS, "Успішний вхід за API ключем!", sessionKey);
             } else {
                 return new BwLoginResponse(LoginStatus.INVALID_PASSWORD, "Невірний майстер-пароль для розблокування!", "");
@@ -323,28 +486,20 @@ public class BitwardenManager {
         }
     }
 
-    /**
-     * Перевірка чи схожий рядок на session key (base64 токен без пробілів і помилок).
-     */
     private static boolean isValidSessionKey(String output) {
         if (output == null) return false;
         String trimmed = output.trim();
         return !trimmed.isEmpty() && !trimmed.contains(" ") && !trimmed.contains("\n") && !trimmed.toLowerCase().contains("error");
     }
 
-    /**
-     * Отримання паролів з Bitwarden до локального сховища.
-     */
     public static BwSyncResult pullFromBitwarden() {
         if (!hasActiveSession()) {
             return new BwSyncResult(false, 0, "Сховище заблоковане або відсутня активна сесія!");
         }
 
         try {
-            // Синхронізуємо локальний кеш Bitwarden CLI
             executeBwCommand("sync");
 
-            // Отримуємо повний список записів сховища
             BwResult result = executeBwCommand("list", "items");
             if (result == null || result.exitCode() != 0 || result.output().isBlank()) {
                 String err = result != null ? result.output().trim() : "Немає відповіді від CLI";
@@ -358,9 +513,11 @@ public class BitwardenManager {
 
             JsonArray items = element.getAsJsonArray();
             int importedCount = 0;
+            Set<String> remoteKeys = new HashSet<>();
 
             for (int i = 0; i < items.size(); i++) {
                 JsonObject item = items.get(i).getAsJsonObject();
+                String id = item.has("id") && !item.get("id").isJsonNull() ? item.get("id").getAsString() : "";
                 String name = item.has("name") && !item.get("name").isJsonNull() ? item.get("name").getAsString() : "";
 
                 if (item.has("login") && !item.get("login").isJsonNull()) {
@@ -371,7 +528,6 @@ public class BitwardenManager {
 
                     String serverIp = "";
 
-                    // Шукаємо URI з mc://
                     if (login.has("uris") && login.get("uris").isJsonArray()) {
                         JsonArray uris = login.getAsJsonArray("uris");
                         for (int u = 0; u < uris.size(); u++) {
@@ -386,14 +542,31 @@ public class BitwardenManager {
                         }
                     }
 
-                    // Fallback: якщо URI не знайдено, перевіряємо чи назва починається з "Minecraft: " або "MC: "
                     if (serverIp.isEmpty() && (name.startsWith("Minecraft: ") || name.startsWith("MC: "))) {
                         serverIp = name.replace("Minecraft: ", "").replace("MC: ", "").trim();
                     }
 
                     if (!serverIp.isEmpty() && !username.isEmpty() && !password.isEmpty()) {
-                        PasswordManager.savePassword(serverIp, username, password, command);
-                        importedCount++;
+                        String key = serverIp.toLowerCase() + "|" + username.toLowerCase();
+                        if (!remoteKeys.contains(key)) {
+                            importedCount++;
+                        }
+                        PasswordManager.savePassword(serverIp, username, password, command, true, id);
+                        remoteKeys.add(key);
+                    }
+                }
+            }
+
+            // Звірка (Reconciliation): скидаємо прапорець isSynced для записів, яких більше немає у хмарі
+            Map<String, Map<String, PasswordManager.AccountData>> allData = PasswordManager.getAllData();
+            for (Map.Entry<String, Map<String, PasswordManager.AccountData>> sEntry : allData.entrySet()) {
+                String sIp = sEntry.getKey();
+                for (Map.Entry<String, PasswordManager.AccountData> aEntry : sEntry.getValue().entrySet()) {
+                    String uName = aEntry.getKey();
+                    PasswordManager.AccountData acc = aEntry.getValue();
+                    String key = sIp.toLowerCase() + "|" + uName.toLowerCase();
+                    if (acc.isSynced() && !remoteKeys.contains(key)) {
+                        PasswordManager.savePassword(sIp, uName, acc.password(), acc.command(), false, "");
                     }
                 }
             }
@@ -405,9 +578,6 @@ public class BitwardenManager {
         }
     }
 
-    /**
-     * Відправлення локальних паролів до Bitwarden (створення або оновлення).
-     */
     public static BwSyncResult pushToBitwarden() {
         if (!hasActiveSession()) {
             return new BwSyncResult(false, 0, "Сховище заблоковане або відсутня активна сесія!");
@@ -416,7 +586,6 @@ public class BitwardenManager {
         try {
             executeBwCommand("sync");
 
-            // Отримуємо існуючі елементи для уникнення дублювання
             Map<String, String> existingItemIds = new HashMap<>();
             BwResult listResult = executeBwCommand("list", "items");
             if (listResult != null && listResult.exitCode() == 0 && !listResult.output().isBlank()) {
@@ -466,10 +635,11 @@ public class BitwardenManager {
                     PasswordManager.AccountData data = accEntry.getValue();
 
                     String key = serverIp.toLowerCase() + "|" + username.toLowerCase();
-                    String existingId = existingItemIds.get(key);
+                    String existingId = data.remoteId().isEmpty() ? existingItemIds.get(key) : data.remoteId();
 
                     boolean success = createOrUpdateBitwardenItem(existingId, serverIp, username, data.password(), data.command());
                     if (success) {
+                        PasswordManager.savePassword(serverIp, username, data.password(), data.command(), true, existingId != null ? existingId : "");
                         if (existingId != null) updated++;
                         else created++;
                     }
@@ -482,6 +652,121 @@ public class BitwardenManager {
             LOGGER.error("[SYPass] Error pushing to Bitwarden", e);
             return new BwSyncResult(false, 0, "Помилка вивантаження: " + e.getMessage());
         }
+    }
+
+    public static String findBitwardenItemId(String serverIp, String username) {
+        try {
+            BwResult listResult = executeBwCommand("list", "items");
+            if (listResult != null && listResult.exitCode() == 0 && !listResult.output().isBlank()) {
+                JsonElement parsed = JsonParser.parseString(listResult.output());
+                if (parsed.isJsonArray()) {
+                    for (JsonElement elem : parsed.getAsJsonArray()) {
+                        JsonObject itemObj = elem.getAsJsonObject();
+                        String id = itemObj.has("id") && !itemObj.get("id").isJsonNull() ? itemObj.get("id").getAsString() : "";
+                        String name = itemObj.has("name") && !itemObj.get("name").isJsonNull() ? itemObj.get("name").getAsString() : "";
+                        String user = "";
+                        String sIp = "";
+
+                        if (itemObj.has("login") && !itemObj.get("login").isJsonNull()) {
+                            JsonObject loginObj = itemObj.getAsJsonObject("login");
+                            user = loginObj.has("username") && !loginObj.get("username").isJsonNull() ? loginObj.get("username").getAsString() : "";
+                            if (loginObj.has("uris") && loginObj.get("uris").isJsonArray()) {
+                                for (JsonElement uElem : loginObj.getAsJsonArray("uris")) {
+                                    JsonObject uObj = uElem.getAsJsonObject();
+                                    if (uObj.has("uri") && !uObj.get("uri").isJsonNull()) {
+                                        String u = uObj.get("uri").getAsString();
+                                        if (u.startsWith("mc://")) {
+                                            sIp = u.replace("mc://", "");
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        if (sIp.isEmpty() && name.startsWith("Minecraft: ")) {
+                            sIp = name.replace("Minecraft: ", "");
+                        }
+
+                        if (!id.isEmpty() && sIp.equalsIgnoreCase(serverIp) && user.equalsIgnoreCase(username)) {
+                            return id;
+                        }
+                    }
+                }
+            }
+        } catch (Exception ignored) {}
+        return "";
+    }
+
+    public static CompletableFuture<Boolean> pushSingleItemAsync(String serverIp, String username, String password, String command) {
+        return CompletableFuture.supplyAsync(() -> {
+            if (!hasActiveSession()) return false;
+            try {
+                PasswordManager.AccountData acc = PasswordManager.getPassword(serverIp, username);
+                String remoteId = acc != null ? acc.remoteId() : "";
+                if (remoteId == null || remoteId.isBlank()) {
+                    remoteId = findBitwardenItemId(serverIp, username);
+                }
+                return createOrUpdateBitwardenItem(remoteId, serverIp, username, password, command);
+            } catch (Exception e) {
+                LOGGER.error("[SYPass] Failed background single push", e);
+                return false;
+            }
+        });
+    }
+
+    public static CompletableFuture<Boolean> deleteSingleItemAsync(String serverIp, String username) {
+        return deleteSingleItemAsync(serverIp, username, null);
+    }
+
+    public static CompletableFuture<Boolean> deleteSingleItemAsync(String serverIp, String username, String knownRemoteId) {
+        return CompletableFuture.supplyAsync(() -> {
+            if (!hasActiveSession()) return false;
+            try {
+                String remoteId = (knownRemoteId != null && !knownRemoteId.isBlank()) ? knownRemoteId.trim() : "";
+                if (remoteId.isEmpty()) {
+                    PasswordManager.AccountData acc = PasswordManager.getPassword(serverIp, username);
+                    remoteId = acc != null ? acc.remoteId() : "";
+                }
+                if (remoteId.isEmpty()) {
+                    remoteId = findBitwardenItemId(serverIp, username);
+                }
+                if (!remoteId.isEmpty()) {
+                    BwResult res = executeBwCommand("delete", "item", remoteId, "--permanent");
+                    executeBwCommand("sync");
+                    return res != null && res.exitCode() == 0;
+                }
+            } catch (Exception e) {
+                LOGGER.error("[SYPass] Failed background single delete", e);
+            }
+            return false;
+        });
+    }
+
+    public static CompletableFuture<Boolean> deleteFromBitwardenOnlyAsync(String serverIp, String username, String knownRemoteId) {
+        return CompletableFuture.supplyAsync(() -> {
+            if (!hasActiveSession()) return false;
+            try {
+                String remoteId = (knownRemoteId != null && !knownRemoteId.isBlank()) ? knownRemoteId.trim() : "";
+                PasswordManager.AccountData acc = PasswordManager.getPassword(serverIp, username);
+                if (remoteId.isEmpty() && acc != null) {
+                    remoteId = acc.remoteId();
+                }
+                if (remoteId.isEmpty()) {
+                    remoteId = findBitwardenItemId(serverIp, username);
+                }
+                if (!remoteId.isEmpty()) {
+                    BwResult res = executeBwCommand("delete", "item", remoteId, "--permanent");
+                    executeBwCommand("sync");
+                    if (res != null && res.exitCode() == 0) {
+                        PasswordManager.unmarkSynced(serverIp, username);
+                        return true;
+                    }
+                }
+            } catch (Exception e) {
+                LOGGER.error("[SYPass] Failed background single delete from Bitwarden", e);
+            }
+            return false;
+        });
     }
 
     private static boolean createOrUpdateBitwardenItem(String existingId, String serverIp, String username, String password, String command) {
@@ -513,7 +798,18 @@ public class BitwardenManager {
             } else {
                 res = executeBwCommand("create", "item", encodedJson);
             }
-            return res != null && res.exitCode() == 0;
+
+            if (res != null && res.exitCode() == 0) {
+                try {
+                    JsonObject resObj = JsonParser.parseString(res.output()).getAsJsonObject();
+                    if (resObj.has("id") && !resObj.get("id").isJsonNull()) {
+                        String newId = resObj.get("id").getAsString();
+                        PasswordManager.savePassword(serverIp, username, password, command, true, newId);
+                    }
+                } catch (Exception ignored) {}
+                return true;
+            }
+            return false;
         } catch (Exception e) {
             LOGGER.error("[SYPass] Error creating/updating item in Bitwarden", e);
             return false;
@@ -524,7 +820,9 @@ public class BitwardenManager {
         try {
             executeBwCommand("logout");
         } catch (Exception ignored) {}
-        sessionKey = "";
+        setSessionKey("", true);
+        PasswordManager.resetSyncFlags();
+        invalidateStatusCache();
     }
 
     private static BwResult executeBwCommand(String... args) {
@@ -544,11 +842,11 @@ public class BitwardenManager {
             if (sessionKey != null && !sessionKey.isEmpty()) {
                 pb.environment().put("BW_SESSION", sessionKey);
             }
+            pb.environment().put("BW_NOINTERACTION", "true");
             if (extraEnv != null) {
                 pb.environment().putAll(extraEnv);
             }
 
-            // Додаємо типові системні шляхи до PATH якщо потрібно
             String currentPath = pb.environment().getOrDefault("PATH", "");
             if (!IS_WINDOWS) {
                 String home = System.getProperty("user.home", "");
@@ -558,7 +856,6 @@ public class BitwardenManager {
 
             Process process = pb.start();
 
-            // Закриваємо stdin, щоб процес не зависав на інтерактивних запитах
             try {
                 process.getOutputStream().close();
             } catch (Exception ignored) {}
@@ -569,25 +866,18 @@ public class BitwardenManager {
                     String line;
                     while ((line = reader.readLine()) != null) {
                         output.append(line).append("\n");
-                        String lower = line.toLowerCase();
-                        // Якщо CLI запитує 2FA код на stdin, не чекаємо вічно
-                        if (lower.contains("two-step") || lower.contains("verification") || lower.contains("two-factor") || lower.contains("2fa") || lower.contains("code:")) {
-                            try { Thread.sleep(200); } catch (Exception ignored) {}
-                            break;
-                        }
                     }
                 } catch (Exception ignored) {}
             });
             readerThread.setDaemon(true);
             readerThread.start();
 
-            // Таймаут 10 секунд на виконання команди
-            boolean finished = process.waitFor(10, TimeUnit.SECONDS);
+            boolean finished = process.waitFor(25, TimeUnit.SECONDS);
             if (!finished) {
                 process.destroyForcibly();
             }
             try {
-                readerThread.join(1000);
+                readerThread.join(2000);
             } catch (Exception ignored) {}
 
             int exitCode = finished ? process.exitValue() : -1;

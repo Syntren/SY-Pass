@@ -1,6 +1,7 @@
 package com.syntren.sypass.client;
 
 import com.syntren.sypass.command.SYPassCommands;
+import com.syntren.sypass.config.SYPassConfig;
 import com.syntren.sypass.gui.SYPassScreen;
 import com.syntren.sypass.handler.AutoLoginHandler;
 import com.syntren.sypass.storage.PasswordManager;
@@ -16,11 +17,11 @@ public class SYPassClient implements ClientModInitializer {
 
 	@Override
 	public void onInitializeClient() {
+		SYPassConfig.load();
 		PasswordManager.init();
 		SYPassCommands.register();
 		AutoLoginHandler.register();
 
-		// Реєстрація клавіші P (Key Binding)
 		openGuiKeyBinding = KeyBindingHelper.registerKeyBinding(new KeyBinding(
 				"key.sypass.open_gui",
 				InputUtil.Type.KEYSYM,
@@ -28,11 +29,10 @@ public class SYPassClient implements ClientModInitializer {
 				"category.sypass.title"
 		));
 
-		// Обробка натискання клавіші
 		ClientTickEvents.END_CLIENT_TICK.register(client -> {
 			while (openGuiKeyBinding.wasPressed()) {
 				if (client.currentScreen == null) {
-					client.setScreen(new SYPassScreen(client.currentScreen));
+					client.setScreen(new SYPassScreen(null));
 				}
 			}
 		});

@@ -1,33 +1,57 @@
 package com.syntren.sypass.handler;
 
+import com.syntren.sypass.config.SYPassConfig;
+import com.syntren.sypass.gui.SYPassToast;
 import com.syntren.sypass.storage.PasswordManager;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.minecraft.client.network.ServerInfo;
+import net.minecraft.item.ItemStack;
+import net.minecraft.item.Items;
 import net.minecraft.text.Text;
 
 public class AutoLoginHandler {
     private static int ticksToWait = -1;
     private static PasswordManager.AccountData pendingEntry = null;
 
+    // Змінні контролю сесії для запобігання спаму при переходах між підсерверами/лобі
+    private static String activeServerAddress = null;
+    private static boolean hasLoggedInThisSession = false;
+
     public static void register() {
-        // Відстеження входу на сервер
+        // 1. Відстеження підключення до сервера
         ClientPlayConnectionEvents.JOIN.register((handler, sender, client) -> {
             ServerInfo server = client.getCurrentServerEntry();
             if (server == null) return;
 
-            String serverIp = server.address;
+            String currentServerIp = server.address;
             String username = client.getSession().getUsername();
-            PasswordManager.AccountData entry = PasswordManager.getPassword(serverIp, username);
 
+            // Перевірка: якщо ми вже залогінилися на цьому сервері в цій сесії (наприклад, перейшли з лобі на виживання)
+            if (currentServerIp.equalsIgnoreCase(activeServerAddress) && hasLoggedInThisSession) {
+                return; // Ігноруємо перехід між лобі
+            }
+
+            // Нове підключення до сервера
+            activeServerAddress = currentServerIp;
+            hasLoggedInThisSession = false;
+
+            PasswordManager.AccountData entry = PasswordManager.getPassword(currentServerIp, username);
             if (entry != null) {
-                // Затримка у 30 тіків (~1.5 секунди), щоб світ і чат встигли завантажитися
                 pendingEntry = entry;
-                ticksToWait = 30;
+                ticksToWait = SYPassConfig.getAutoLoginDelayTicks();
             }
         });
 
-        // Відлік таймера та відправлення команди в чат
+        // 2. Скидання сесії при виході в головне меню
+        ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> {
+            activeServerAddress = null;
+            hasLoggedInThisSession = false;
+            pendingEntry = null;
+            ticksToWait = -1;
+        });
+
+        // 3. Відлік затримки та виконання команди
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
             if (ticksToWait > 0) {
                 ticksToWait--;
@@ -42,10 +66,18 @@ public class AutoLoginHandler {
 
                     String fullCommand = cmd + " " + pendingEntry.password();
 
-                    // Надсилаємо команду авторизації від імені гравця
+                    // Відправляємо команду авторизації
                     client.player.networkHandler.sendChatCommand(fullCommand);
-                    client.player.sendMessage(Text.literal("§a[SY-Pass] Автоматично виконано вхід для акаунта §e" + client.getSession().getUsername() + "§a!"), false);
 
+                    // Показуємо красивий Toast замість повідомлення в чат
+                    String username = client.getSession().getUsername();
+                    SYPassToast.show(
+                            Text.translatable("sypass.toast.autologin.title"),
+                            Text.translatable("sypass.toast.autologin.desc", username),
+                            new ItemStack(Items.TRIPWIRE_HOOK)
+                    );
+
+                    hasLoggedInThisSession = true;
                     pendingEntry = null;
                 }
             }

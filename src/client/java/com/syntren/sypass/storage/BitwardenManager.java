@@ -6,6 +6,7 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import net.fabricmc.loader.api.FabricLoader;
+import net.minecraft.text.Text;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -132,7 +133,7 @@ public class BitwardenManager {
                 }
 
                 String downloadUrl = getDownloadUrlForCurrentPlatform();
-                listener.onProgress(0.05f, 0, -1, "З'єднання з сервером Bitwarden...");
+                listener.onProgress(0.05f, 0, -1, Text.translatable("sypass.gui.bw.download.connecting").getString());
 
                 URL url = URI.create(downloadUrl).toURL();
                 HttpURLConnection connection = null;
@@ -154,11 +155,12 @@ public class BitwardenManager {
                 }
 
                 if (connection == null) {
-                    throw new IOException("Не вдалося встановити HTTP-з'єднання з " + downloadUrl);
+                    throw new IOException(Text.translatable("sypass.gui.bw.download.error.http", downloadUrl).getString());
                 }
 
                 long totalBytes = connection.getContentLengthLong();
                 long downloadedBytes = 0;
+                long lastUpdate = 0;
 
                 try (InputStream in = new BufferedInputStream(connection.getInputStream(), 65536);
                      OutputStream out = new BufferedOutputStream(new FileOutputStream(tempZip), 65536)) {
@@ -167,13 +169,17 @@ public class BitwardenManager {
                     while ((bytesRead = in.read(buffer)) != -1) {
                         out.write(buffer, 0, bytesRead);
                         downloadedBytes += bytesRead;
-                        float progress = totalBytes > 0 ? (float) downloadedBytes / totalBytes : 0.5f;
-                        listener.onProgress(Math.min(0.90f, progress), downloadedBytes, totalBytes, "Завантаження архіву Bitwarden CLI...");
+                        long now = System.currentTimeMillis();
+                        if (now - lastUpdate > 40) {
+                            lastUpdate = now;
+                            float progress = totalBytes > 0 ? (float) downloadedBytes / totalBytes : 0.5f;
+                            listener.onProgress(progress, downloadedBytes, totalBytes, Text.translatable("sypass.gui.bw.download.downloading").getString());
+                        }
                     }
                     out.flush();
                 }
 
-                listener.onProgress(0.92f, downloadedBytes, totalBytes, "Розпакування архіву...");
+                listener.onProgress(1.0f, downloadedBytes, totalBytes, Text.translatable("sypass.gui.bw.download.extracting").getString());
 
                 boolean extracted = false;
                 try (ZipInputStream zis = new ZipInputStream(new BufferedInputStream(new FileInputStream(tempZip), 65536))) {
@@ -198,7 +204,7 @@ public class BitwardenManager {
                 tempZip.delete();
 
                 if (!extracted) {
-                    listener.onError("Не знайдено виконуваний файл 'bw' всередині завантаженого архіву.");
+                    listener.onError(Text.translatable("sypass.gui.bw.download.error.not_found_in_zip").getString());
                     return;
                 }
 
@@ -214,19 +220,20 @@ public class BitwardenManager {
                 }
 
                 invalidateStatusCache();
-                listener.onProgress(0.98f, downloadedBytes, totalBytes, "Перевірка запуску CLI...");
+                listener.onProgress(1.0f, downloadedBytes, totalBytes, Text.translatable("sypass.gui.bw.download.verifying").getString());
 
                 if (isCliInstalled()) {
-                    listener.onProgress(1.0f, downloadedBytes, totalBytes, "Успішно встановлено!");
+                    listener.onProgress(1.0f, downloadedBytes, totalBytes, Text.translatable("sypass.gui.bw.download.success").getString());
+                    try { Thread.sleep(450); } catch (Exception ignored) {}
                     listener.onSuccess();
                 } else {
-                    listener.onError("Файл завантажено, але не вдалося запустити Bitwarden CLI.");
+                    listener.onError(Text.translatable("sypass.gui.bw.download.error.launch_failed").getString());
                 }
 
             } catch (Exception e) {
                 LOGGER.error("[SYPass] Error downloading Bitwarden CLI", e);
                 tempZip.delete();
-                listener.onError("Помилка завантаження: " + e.getMessage());
+                listener.onError(Text.translatable("sypass.gui.bw.download.error.failed", e.getMessage()).getString());
             }
         }).start();
     }
@@ -342,7 +349,7 @@ public class BitwardenManager {
 
     public static BwLoginResponse login(String email, String password, String otp, String method) {
         if (email == null || email.isBlank() || password == null || password.isBlank()) {
-            return new BwLoginResponse(LoginStatus.ERROR, "Введіть Email та майстер-пароль!", "");
+            return new BwLoginResponse(LoginStatus.ERROR, Text.translatable("sypass.gui.bw.error.empty_credentials").getString(), "");
         }
 
         email = email.trim();
@@ -350,7 +357,7 @@ public class BitwardenManager {
 
         BwStatusInfo statusInfo = getStatusInfo();
         if (!statusInfo.isInstalled()) {
-            return new BwLoginResponse(LoginStatus.CLI_NOT_FOUND, "Bitwarden CLI (bw) не знайдено в системі!", "");
+            return new BwLoginResponse(LoginStatus.CLI_NOT_FOUND, Text.translatable("sypass.gui.bw.error.cli_not_found").getString(), "");
         }
 
         try {
@@ -365,7 +372,7 @@ public class BitwardenManager {
                 BwResult unlockResult = executeBwCommandWithEnv(unlockEnv, "unlock", "--passwordenv", "BW_PASSWORD", "--raw");
                 if (unlockResult != null && unlockResult.exitCode() == 0 && isValidSessionKey(unlockResult.output())) {
                     setSessionKey(unlockResult.output().trim());
-                    return new BwLoginResponse(LoginStatus.SUCCESS, "Сховище успішно розблоковано!", sessionKey);
+                    return new BwLoginResponse(LoginStatus.SUCCESS, Text.translatable("sypass.gui.bw.error.unlock_success").getString(), sessionKey);
                 }
                 LOGGER.info("[SYPass] Unlock failed. Resetting session to perform fresh login...");
                 executeBwCommand("logout");
@@ -394,7 +401,7 @@ public class BitwardenManager {
 
         } catch (Exception e) {
             LOGGER.error("[SYPass] Exception during login", e);
-            return new BwLoginResponse(LoginStatus.ERROR, "Помилка: " + e.getMessage(), "");
+            return new BwLoginResponse(LoginStatus.ERROR, Text.translatable("sypass.gui.bw.error.generic", e.getMessage()).getString(), "");
         }
     }
 
@@ -427,7 +434,7 @@ public class BitwardenManager {
         env.put("BW_PASSWORD", password);
         BwResult result = executeBwCommandWithEnv(env, args.toArray(new String[0]));
         if (result == null) {
-            return new BwLoginResponse(LoginStatus.ERROR, "Не вдалося запустити Bitwarden CLI", "");
+            return new BwLoginResponse(LoginStatus.ERROR, Text.translatable("sypass.gui.bw.error.cli_launch_failed").getString(), "");
         }
 
         String output = result.output().trim();
@@ -441,7 +448,7 @@ public class BitwardenManager {
         // 1. Success check
         if (result.exitCode() == 0 && isValidSessionKey(output)) {
             setSessionKey(output);
-            return new BwLoginResponse(LoginStatus.SUCCESS, "Успішна авторизація!", sessionKey);
+            return new BwLoginResponse(LoginStatus.SUCCESS, Text.translatable("sypass.gui.bw.error.login_success").getString(), sessionKey);
         }
 
         // 2. If OTP was submitted, this was a verification attempt and MUST NOT loop back to NEED_OTP
@@ -449,7 +456,7 @@ public class BitwardenManager {
             LOGGER.warn("[SYPass] OTP verification failed: {}", output);
             if (lowerOutput.contains("invalid") || lowerOutput.contains("code") || lowerOutput.contains("token")
                     || lowerOutput.contains("fail") || lowerOutput.contains("incorrect")) {
-                return new BwLoginResponse(LoginStatus.INVALID_OTP, "Невірний або застарілий 2FA код! Перевірте код або виберіть інший метод.", "");
+                return new BwLoginResponse(LoginStatus.INVALID_OTP, Text.translatable("sypass.gui.bw.error.invalid_otp").getString(), "");
             }
             return new BwLoginResponse(LoginStatus.ERROR, output.replace("\n", " ").trim(), "");
         }
@@ -460,25 +467,25 @@ public class BitwardenManager {
                 lowerOutput.contains("2fa") || lowerOutput.contains("code:") ||
                 lowerOutput.contains("selectedprovider") || lowerOutput.contains("provider")) {
             String promptMsg = lowerOutput.contains("email")
-                    ? "Код підтвердження надіслано на Email! Введіть його нижче:"
-                    : "Введіть 2FA код підтвердження (з додатка Authenticator або пошти):";
+                    ? Text.translatable("sypass.gui.bw.otp.prompt_email").getString()
+                    : Text.translatable("sypass.gui.bw.otp.prompt_app").getString();
             return new BwLoginResponse(LoginStatus.NEED_OTP, promptMsg, "");
         }
 
         // 4. Invalid credentials check
         if (result.exitCode() != 0 || lowerOutput.contains("invalid")) {
             if (lowerOutput.contains("username or password") || lowerOutput.contains("master password") || lowerOutput.contains("credentials")) {
-                return new BwLoginResponse(LoginStatus.INVALID_PASSWORD, "Невірний Email або майстер-пароль!", "");
+                return new BwLoginResponse(LoginStatus.INVALID_PASSWORD, Text.translatable("sypass.gui.bw.error.invalid_password").getString(), "");
             }
             return new BwLoginResponse(LoginStatus.ERROR, output.replace("\n", " ").trim(), "");
         }
 
-        return new BwLoginResponse(LoginStatus.ERROR, "Неочікувана відповідь від Bitwarden: " + output, "");
+        return new BwLoginResponse(LoginStatus.ERROR, Text.translatable("sypass.gui.bw.error.unexpected_response", output).getString(), "");
     }
 
     public static BwLoginResponse loginWithApiKey(String clientId, String clientSecret, String masterPassword) {
         if (clientId == null || clientId.isBlank() || clientSecret == null || clientSecret.isBlank() || masterPassword == null || masterPassword.isBlank()) {
-            return new BwLoginResponse(LoginStatus.ERROR, "Заповніть Client ID, Client Secret та майстер-пароль!", "");
+            return new BwLoginResponse(LoginStatus.ERROR, Text.translatable("sypass.gui.bw.error.empty_apikey").getString(), "");
         }
 
         try {
@@ -496,20 +503,20 @@ public class BitwardenManager {
             BwResult loginRes = executeBwCommandWithEnv(env, "login", "--apikey");
             if (loginRes == null || loginRes.exitCode() != 0) {
                 String err = loginRes != null ? loginRes.output().trim() : "Помилка запуску";
-                return new BwLoginResponse(LoginStatus.ERROR, "Помилка API Key: " + err, "");
+                return new BwLoginResponse(LoginStatus.ERROR, Text.translatable("sypass.gui.bw.error.apikey_failed", err).getString(), "");
             }
 
             Map<String, String> unlockEnv = Map.of("BW_PASSWORD", masterPassword.trim());
             BwResult unlockRes = executeBwCommandWithEnv(unlockEnv, "unlock", "--passwordenv", "BW_PASSWORD", "--raw");
             if (unlockRes != null && unlockRes.exitCode() == 0 && isValidSessionKey(unlockRes.output())) {
                 setSessionKey(unlockRes.output().trim());
-                return new BwLoginResponse(LoginStatus.SUCCESS, "Успішний вхід за API ключем!", sessionKey);
+                return new BwLoginResponse(LoginStatus.SUCCESS, Text.translatable("sypass.gui.bw.error.apikey_success").getString(), sessionKey);
             } else {
-                return new BwLoginResponse(LoginStatus.INVALID_PASSWORD, "Невірний майстер-пароль для розблокування!", "");
+                return new BwLoginResponse(LoginStatus.INVALID_PASSWORD, Text.translatable("sypass.gui.bw.error.invalid_unlock_password").getString(), "");
             }
         } catch (Exception e) {
             LOGGER.error("[SYPass] Error logging in with API key", e);
-            return new BwLoginResponse(LoginStatus.ERROR, "Помилка: " + e.getMessage(), "");
+            return new BwLoginResponse(LoginStatus.ERROR, Text.translatable("sypass.gui.bw.error.generic", e.getMessage()).getString(), "");
         }
     }
 
@@ -521,7 +528,7 @@ public class BitwardenManager {
 
     public static BwSyncResult pullFromBitwarden() {
         if (!hasActiveSession()) {
-            return new BwSyncResult(false, 0, "Сховище заблоковане або відсутня активна сесія!");
+            return new BwSyncResult(false, 0, Text.translatable("sypass.gui.bw.sync.vault_locked").getString());
         }
 
         try {
@@ -530,12 +537,12 @@ public class BitwardenManager {
             BwResult result = executeBwCommand("list", "items");
             if (result == null || result.exitCode() != 0 || result.output().isBlank()) {
                 String err = result != null ? result.output().trim() : "Немає відповіді від CLI";
-                return new BwSyncResult(false, 0, "Не вдалося отримати записи: " + err);
+                return new BwSyncResult(false, 0, Text.translatable("sypass.gui.bw.sync.fetch_failed", err).getString());
             }
 
             JsonElement element = JsonParser.parseString(result.output());
             if (!element.isJsonArray()) {
-                return new BwSyncResult(false, 0, "Некоректний формат відповіді від Bitwarden");
+                return new BwSyncResult(false, 0, Text.translatable("sypass.gui.bw.sync.invalid_format").getString());
             }
 
             JsonArray items = element.getAsJsonArray();
@@ -601,16 +608,16 @@ public class BitwardenManager {
                 }
             }
 
-            return new BwSyncResult(true, importedCount, "Успішно імпортовано " + importedCount + " паролів!");
+            return new BwSyncResult(true, importedCount, Text.translatable("sypass.gui.bw.sync.pull_success", importedCount).getString());
         } catch (Exception e) {
             LOGGER.error("[SYPass] Error pulling from Bitwarden", e);
-            return new BwSyncResult(false, 0, "Помилка імпорту: " + e.getMessage());
+            return new BwSyncResult(false, 0, Text.translatable("sypass.gui.bw.sync.pull_failed", e.getMessage()).getString());
         }
     }
 
     public static BwSyncResult pushToBitwarden() {
         if (!hasActiveSession()) {
-            return new BwSyncResult(false, 0, "Сховище заблоковане або відсутня активна сесія!");
+            return new BwSyncResult(false, 0, Text.translatable("sypass.gui.bw.sync.vault_locked").getString());
         }
 
         try {
@@ -679,10 +686,10 @@ public class BitwardenManager {
             }
 
             executeBwCommand("sync");
-            return new BwSyncResult(true, created + updated, "Створено: " + created + ", Оновлено: " + updated);
+            return new BwSyncResult(true, created + updated, Text.translatable("sypass.gui.bw.sync.push_summary", created, updated).getString());
         } catch (Exception e) {
             LOGGER.error("[SYPass] Error pushing to Bitwarden", e);
-            return new BwSyncResult(false, 0, "Помилка вивантаження: " + e.getMessage());
+            return new BwSyncResult(false, 0, Text.translatable("sypass.gui.bw.sync.push_failed", e.getMessage()).getString());
         }
     }
 

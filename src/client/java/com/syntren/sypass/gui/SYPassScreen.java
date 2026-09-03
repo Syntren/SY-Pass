@@ -820,7 +820,7 @@ public class SYPassScreen extends BaseOwoScreen<FlowLayout> {
 
                 ButtonComponent yesBtn = Components.button(Text.translatable("sypass.gui.bw.confirm_delete_cli.yes"), b -> {
                     boolean deleted = BitwardenManager.deleteLocalCli();
-                    statusMessage = deleted ? "§e" + Text.translatable("sypass.gui.bw.delete_local_cli").getString() : "§cError";
+                    statusMessage = deleted ? "§e" + Text.translatable("sypass.gui.bw.delete_local_cli").getString() : "§c" + Text.translatable("sypass.gui.bw.error.generic", "Delete failed").getString();
                     bwStage = BwStage.CLI_NOT_FOUND;
                     updateBitwardenStatusAsync();
                     rebuildUI();
@@ -870,7 +870,7 @@ public class SYPassScreen extends BaseOwoScreen<FlowLayout> {
     private void startCliDownload() {
         this.bwStage = BwStage.CLI_DOWNLOADING;
         this.downloadProgress = 0.05f;
-        this.downloadStatusText = "Connecting...";
+        this.downloadStatusText = Text.translatable("sypass.gui.bw.download.connecting").getString();
         this.downloadDetailText = "";
         this.statusMessage = "";
         this.lastProgressUpdateMs = 0;
@@ -880,19 +880,20 @@ public class SYPassScreen extends BaseOwoScreen<FlowLayout> {
             @Override
             public void onProgress(float progress, long downloadedBytes, long totalBytes, String statusText) {
                 long now = System.currentTimeMillis();
-                if (now - lastProgressUpdateMs < 50 && progress < 0.99f) {
+                if (now - lastProgressUpdateMs < 30 && progress < 0.99f) {
                     return;
                 }
                 lastProgressUpdateMs = now;
 
                 if (client != null) {
                     client.execute(() -> {
-                        downloadProgress = progress;
+                        downloadProgress = Math.max(0.0f, Math.min(1.0f, progress));
                         downloadStatusText = statusText;
                         if (totalBytes > 0) {
                             float downMb = downloadedBytes / (1024f * 1024f);
                             float totalMb = totalBytes / (1024f * 1024f);
-                            downloadDetailText = String.format("%.1f MB / %.1f MB (%d%%)", downMb, totalMb, (int) (progress * 100));
+                            int percent = Math.min(100, Math.round(((float) downloadedBytes / totalBytes) * 100));
+                            downloadDetailText = String.format("%.1f MB / %.1f MB (%d%%)", downMb, totalMb, percent);
                         } else if (downloadedBytes > 0) {
                             float downMb = downloadedBytes / (1024f * 1024f);
                             downloadDetailText = String.format("%.1f MB", downMb);
@@ -905,7 +906,7 @@ public class SYPassScreen extends BaseOwoScreen<FlowLayout> {
                             downloadDetailLabel.text(Text.literal("§7" + downloadDetailText));
                         }
                         if (downloadProgressBar != null) {
-                            int percent = Math.max(2, Math.min(100, (int) (progress * 100)));
+                            int percent = Math.max(2, Math.min(100, (int) (downloadProgress * 100)));
                             downloadProgressBar.horizontalSizing(Sizing.fill(percent));
                         }
                     });
@@ -917,7 +918,7 @@ public class SYPassScreen extends BaseOwoScreen<FlowLayout> {
                 if (client != null) {
                     client.execute(() -> {
                         bwStage = BwStage.LOGIN;
-                        statusMessage = "§aBitwarden CLI Ready!";
+                        statusMessage = "§a" + Text.translatable("sypass.gui.bw.ready").getString();
                         updateBitwardenStatusAsync();
                         rebuildUI();
                     });

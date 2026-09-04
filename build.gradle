@@ -77,6 +77,10 @@ tasks.named('remapJar') {
 	archiveFileName = "sypass-fabric-${project.version}-mc${project.minecraft_version}.jar"
 }
 
+afterEvaluate {
+	file('build/resources/client').mkdirs()
+}
+
 publishing {
 	publications {
 		create("mavenJava", MavenPublication) {

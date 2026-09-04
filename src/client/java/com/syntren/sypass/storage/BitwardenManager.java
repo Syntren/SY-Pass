@@ -568,7 +568,7 @@ public class BitwardenManager {
         return "";
     }
 
-    private static boolean isValidSessionKey(String output) {
+    public static boolean isValidSessionKey(String output) {
         return !extractSessionKey(output).isEmpty();
     }
 

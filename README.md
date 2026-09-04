@@ -1,6 +1,6 @@
 # SY-Pass
 
-**SY-Pass** is a client-side Fabric mod for Minecraft (1.21.1) designed to simplify and secure your in-game server authentication. It acts as an integrated password manager featuring robust AES-256-GCM local credential storage, automated server login, and cloud synchronization via the official **Bitwarden CLI**.
+**SY-Pass** is a client-side Fabric mod for Minecraft (1.21 – 1.21.1) designed to simplify and secure your in-game server authentication. It acts as an integrated password manager featuring robust AES-256-GCM local credential storage, automated server login, and cloud synchronization via the official **Bitwarden CLI**.
 
 ---
 
@@ -20,7 +20,7 @@
 
 ## 🛠️ Requirements
 
-- **Minecraft:** 1.21.1
+- **Minecraft:** 1.21 – 1.21.1
 - **Fabric Loader:** >= 0.16.0
 - **Fabric API**
 - **oωo-lib:** >= 0.12.15

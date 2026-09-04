@@ -252,9 +252,13 @@ public class BitwardenManager {
             String appData = System.getenv("APPDATA");
             String localAppData = System.getenv("LOCALAPPDATA");
             String programFiles = System.getenv("ProgramFiles");
+            String programFilesX86 = System.getenv("ProgramFiles(x86)");
             if (appData != null) candidatePaths.add(Path.of(appData, "npm", "bw.cmd"));
             if (localAppData != null) candidatePaths.add(Path.of(localAppData, "npm", "bw.cmd"));
             if (programFiles != null) candidatePaths.add(Path.of(programFiles, "Bitwarden CLI", "bw.exe"));
+            if (programFilesX86 != null) candidatePaths.add(Path.of(programFilesX86, "Bitwarden CLI", "bw.exe"));
+            if (!userHome.isBlank()) candidatePaths.add(Path.of(userHome, "scoop", "shims", "bw.exe"));
+            candidatePaths.add(Path.of("C:\\ProgramData\\chocolatey\\bin\\bw.exe"));
         } else {
             candidatePaths.add(Path.of("/usr/local/bin/bw"));
             candidatePaths.add(Path.of("/usr/bin/bw"));
@@ -268,7 +272,7 @@ public class BitwardenManager {
         }
 
         for (Path path : candidatePaths) {
-            if (Files.exists(path) && Files.isExecutable(path)) {
+            if (Files.exists(path) && (IS_WINDOWS || Files.isExecutable(path))) {
                 return path.toAbsolutePath().toString();
             }
         }
@@ -956,7 +960,7 @@ public class BitwardenManager {
             String currentPath = pb.environment().getOrDefault("PATH", "");
             if (!IS_WINDOWS) {
                 String home = System.getProperty("user.home", "");
-                String extraPaths = "/usr/local/bin:/usr/bin:/bin:" + home + "/.local/bin:" + home + "/.cargo/bin:" + home + "/.npm-global/bin";
+                String extraPaths = "/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin:" + home + "/.local/bin:" + home + "/.cargo/bin:" + home + "/.npm-global/bin";
                 pb.environment().put("PATH", currentPath.isEmpty() ? extraPaths : currentPath + ":" + extraPaths);
             }
 

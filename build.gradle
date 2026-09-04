@@ -74,7 +74,7 @@ jar {
 }
 
 tasks.named('remapJar') {
-	archiveFileName = "sypass-fabric-${project.version}-mc${project.minecraft_version}.jar"
+	archiveFileName = "sypass-fabric-${project.version}-mc1.21-1.21.1.jar"
 }
 
 afterEvaluate {

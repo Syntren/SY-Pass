@@ -40,7 +40,7 @@ public class EditPasswordScreen extends BaseOwoScreen<FlowLayout> {
     private boolean showPassword = true;
 
     public EditPasswordScreen(Screen parent) {
-        this(parent, "", "", "", "/login", true);
+        this(parent, "", "", "", "/login", BitwardenManager.hasActiveSession() && SYPassConfig.isAutoSyncEnabled());
     }
 
     public EditPasswordScreen(Screen parent, String serverIp, String username, String password, String command, boolean isSynced) {

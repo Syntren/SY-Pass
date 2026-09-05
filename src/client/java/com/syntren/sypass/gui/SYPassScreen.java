@@ -391,7 +391,7 @@ public class SYPassScreen extends BaseOwoScreen<FlowLayout> {
                 String remoteId = data.remoteId();
                 boolean wasSynced = data.isSynced();
                 PasswordManager.removePassword(serverIp, username);
-                if (wasSynced && BitwardenManager.hasActiveSession()) {
+                if (wasSynced && com.syntren.sypass.config.SYPassConfig.isAutoSyncEnabled() && BitwardenManager.hasActiveSession()) {
                     BitwardenManager.deleteSingleItemAsync(serverIp, username, remoteId);
                 }
                 this.statusMessage = Text.translatable("sypass.gui.status.deleted", username, serverIp).getString();

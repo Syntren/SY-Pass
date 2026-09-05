@@ -102,7 +102,10 @@ public class PasswordManager {
     }
 
     public static synchronized void savePassword(String serverIp, String username, String password, String command) {
-        savePassword(serverIp, username, password, command, false, "");
+        AccountData existing = getPassword(serverIp, username);
+        boolean synced = (existing != null && existing.isSynced());
+        String remoteId = (existing != null && existing.remoteId() != null) ? existing.remoteId() : "";
+        savePassword(serverIp, username, password, command, synced, remoteId);
     }
 
     public static synchronized void savePassword(String serverIp, String username, String password, String command, boolean isSynced, String remoteId) {

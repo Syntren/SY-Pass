@@ -415,9 +415,15 @@ public class SYPassScreen extends BaseOwoScreen<FlowLayout> {
     // Вкладка Bitwarden
     // ==========================================
     private void buildBitwardenTab(FlowLayout root) {
-        if (BitwardenManager.hasActiveSession() && bwStage != BwStage.LOGGED_IN
-                && bwStage != BwStage.CONFIRM_LOGOUT && bwStage != BwStage.CONFIRM_DELETE_CLI) {
-            bwStage = BwStage.LOGGED_IN;
+        if (BitwardenManager.hasActiveSession()) {
+            if (bwStage != BwStage.LOGGED_IN
+                    && bwStage != BwStage.CONFIRM_LOGOUT && bwStage != BwStage.CONFIRM_DELETE_CLI) {
+                bwStage = BwStage.LOGGED_IN;
+            }
+        } else {
+            if (bwStage == BwStage.LOGGED_IN || bwStage == BwStage.CONFIRM_LOGOUT) {
+                bwStage = BwStage.LOGIN;
+            }
         }
 
         boolean cliReady = BitwardenManager.isCliInstalled();
@@ -957,7 +963,7 @@ public class SYPassScreen extends BaseOwoScreen<FlowLayout> {
                     this.cachedStatusInfo = info;
                     if (!info.isInstalled()) {
                         this.bwStage = BwStage.CLI_NOT_FOUND;
-                    } else if (info.isUnlocked() || BitwardenManager.hasActiveSession()) {
+                    } else if (info.isUnlocked() && BitwardenManager.hasActiveSession()) {
                         if (this.bwStage != BwStage.CONFIRM_LOGOUT && this.bwStage != BwStage.CONFIRM_DELETE_CLI) {
                             this.bwStage = BwStage.LOGGED_IN;
                         }
@@ -1099,6 +1105,9 @@ public class SYPassScreen extends BaseOwoScreen<FlowLayout> {
                 this.client.execute(() -> {
                     this.isProcessing = false;
                     this.statusMessage = result.success() ? "§a" + result.message() : "§c" + result.message();
+                    if (!BitwardenManager.hasActiveSession()) {
+                        this.bwStage = BwStage.LOGIN;
+                    }
                     refreshPasswordList();
                     rebuildUI();
                 });
@@ -1117,6 +1126,9 @@ public class SYPassScreen extends BaseOwoScreen<FlowLayout> {
                 this.client.execute(() -> {
                     this.isProcessing = false;
                     this.statusMessage = result.success() ? "§a" + result.message() : "§c" + result.message();
+                    if (!BitwardenManager.hasActiveSession()) {
+                        this.bwStage = BwStage.LOGIN;
+                    }
                     rebuildUI();
                 });
             }
@@ -1126,6 +1138,7 @@ public class SYPassScreen extends BaseOwoScreen<FlowLayout> {
     private void handleFullSync() {
         // Перевірка: чи залогінений користувач
         if (!BitwardenManager.hasActiveSession()) {
+            this.bwStage = BwStage.LOGIN;
             this.statusMessage = "§c" + Text.translatable("sypass.gui.status.not_logged_in").getString();
             refreshPasswordList();
             rebuildUI();
@@ -1143,6 +1156,9 @@ public class SYPassScreen extends BaseOwoScreen<FlowLayout> {
                     this.client.execute(() -> {
                         this.isProcessing = false;
                         this.statusMessage = "§c" + pullRes.message();
+                        if (!BitwardenManager.hasActiveSession()) {
+                            this.bwStage = BwStage.LOGIN;
+                        }
                         refreshPasswordList();
                         rebuildUI();
                     });
@@ -1163,6 +1179,9 @@ public class SYPassScreen extends BaseOwoScreen<FlowLayout> {
                         );
                     } else {
                         this.statusMessage = "§c" + pushRes.message();
+                        if (!BitwardenManager.hasActiveSession()) {
+                            this.bwStage = BwStage.LOGIN;
+                        }
                     }
                     refreshPasswordList();
                     rebuildUI();

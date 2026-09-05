@@ -331,6 +331,9 @@ public class BitwardenManager {
                     String status = obj.has("status") && !obj.get("status").isJsonNull() ? obj.get("status").getAsString() : "unknown";
                     String userEmail = obj.has("userEmail") && !obj.get("userEmail").isJsonNull() ? obj.get("userEmail").getAsString() : "";
                     String serverUrl = obj.has("serverUrl") && !obj.get("serverUrl").isJsonNull() ? obj.get("serverUrl").getAsString() : "";
+                    if ("locked".equalsIgnoreCase(status) || "unauthenticated".equalsIgnoreCase(status)) {
+                        setSessionKey("", true);
+                    }
                     cachedStatus = new BwStatusInfo(true, local, cliPath, status, userEmail, serverUrl);
                 } else {
                     cachedStatus = new BwStatusInfo(installed, local, cliPath, "error", "", "");

@@ -26,14 +26,15 @@ public class AutoLoginHandler {
 
             String currentServerIp = server.address;
             String username = client.getSession().getUsername();
+            String normServerIp = PasswordManager.normalizeServerAddress(currentServerIp);
 
             // Перевірка: якщо ми вже залогінилися на цьому сервері в цій сесії (наприклад, перейшли з лобі на виживання)
-            if (currentServerIp.equalsIgnoreCase(activeServerAddress) && hasLoggedInThisSession) {
+            if (normServerIp.equalsIgnoreCase(activeServerAddress) && hasLoggedInThisSession) {
                 return; // Ігноруємо перехід між лобі
             }
 
             // Нове підключення до сервера
-            activeServerAddress = currentServerIp;
+            activeServerAddress = normServerIp;
             hasLoggedInThisSession = false;
 
             PasswordManager.AccountData entry = PasswordManager.getPassword(currentServerIp, username);
@@ -82,5 +83,47 @@ public class AutoLoginHandler {
                 }
             }
         });
+    }
+
+    /**
+     * Ручний виклик входу за гарячою клавішею
+     */
+    public static void executeManualLogin(net.minecraft.client.MinecraftClient client) {
+        if (client == null || client.player == null) return;
+
+        ServerInfo server = client.getCurrentServerEntry();
+        if (server == null) {
+            SYPassToast.show(
+                    Text.translatable("sypass.toast.quicklogin.title"),
+                    Text.translatable("sypass.toast.quicklogin.not_server"),
+                    new ItemStack(Items.BARRIER)
+            );
+            return;
+        }
+
+        String username = client.getSession().getUsername();
+        PasswordManager.AccountData entry = PasswordManager.getPassword(server.address, username);
+        if (entry != null) {
+            String cmd = entry.command().trim();
+            if (cmd.startsWith("/")) {
+                cmd = cmd.substring(1);
+            }
+
+            String fullCommand = cmd + " " + entry.password();
+            client.player.networkHandler.sendChatCommand(fullCommand);
+
+            SYPassToast.show(
+                    Text.translatable("sypass.toast.quicklogin.title"),
+                    Text.translatable("sypass.toast.quicklogin.desc", username),
+                    new ItemStack(Items.TRIPWIRE_HOOK)
+            );
+            hasLoggedInThisSession = true;
+        } else {
+            SYPassToast.show(
+                    Text.translatable("sypass.toast.quicklogin.title"),
+                    Text.translatable("sypass.toast.quicklogin.not_found", server.address),
+                    new ItemStack(Items.BARRIER)
+            );
+        }
     }
 }

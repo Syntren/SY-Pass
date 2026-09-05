@@ -89,6 +89,18 @@ public class PasswordManager {
         Files.write(KEY_FILE, secretKey.getEncoded());
     }
 
+    public static String normalizeServerAddress(String address) {
+        if (address == null) return "";
+        String clean = address.trim().toLowerCase(java.util.Locale.ROOT);
+        if (clean.endsWith(":25565")) {
+            clean = clean.substring(0, clean.length() - 6);
+        }
+        if (clean.endsWith(".")) {
+            clean = clean.substring(0, clean.length() - 1);
+        }
+        return clean;
+    }
+
     public static synchronized void savePassword(String serverIp, String username, String password, String command) {
         savePassword(serverIp, username, password, command, false, "");
     }
@@ -97,7 +109,7 @@ public class PasswordManager {
         if (serverIp == null || serverIp.isBlank() || username == null || username.isBlank() || password == null) {
             return;
         }
-        serverIp = serverIp.trim();
+        String cleanServer = normalizeServerAddress(serverIp);
         username = username.trim();
         password = password.trim();
 
@@ -106,17 +118,37 @@ public class PasswordManager {
             formattedCommand = "/" + formattedCommand;
         }
 
-        memoryData.computeIfAbsent(serverIp, k -> new ConcurrentHashMap<>())
+        memoryData.computeIfAbsent(cleanServer, k -> new ConcurrentHashMap<>())
                 .put(username, new AccountData(password, formattedCommand, isSynced, remoteId));
         saveToFile();
     }
 
     public static AccountData getPassword(String serverIp, String username) {
         if (serverIp == null || username == null) return null;
-        Map<String, AccountData> serverAccounts = memoryData.get(serverIp.trim());
-        if (serverAccounts != null) {
-            return serverAccounts.get(username.trim());
+        String cleanUser = username.trim();
+        String normServer = normalizeServerAddress(serverIp);
+
+        // 1. Пошук за нормалізованою адресою (без :25565, у нижньому регістрі)
+        Map<String, AccountData> serverAccounts = memoryData.get(normServer);
+        if (serverAccounts != null && serverAccounts.containsKey(cleanUser)) {
+            return serverAccounts.get(cleanUser);
         }
+
+        // 2. Зворотна сумісність: пошук за сирим рядком
+        String rawServer = serverIp.trim();
+        if (!rawServer.equals(normServer)) {
+            serverAccounts = memoryData.get(rawServer);
+            if (serverAccounts != null && serverAccounts.containsKey(cleanUser)) {
+                return serverAccounts.get(cleanUser);
+            }
+        }
+
+        // 3. Зворотна сумісність: пошук за адресою з портом :25565
+        serverAccounts = memoryData.get(normServer + ":25565");
+        if (serverAccounts != null && serverAccounts.containsKey(cleanUser)) {
+            return serverAccounts.get(cleanUser);
+        }
+
         return null;
     }
 
@@ -126,7 +158,17 @@ public class PasswordManager {
 
     public static Map<String, AccountData> getServerAccounts(String serverIp) {
         if (serverIp == null) return Collections.emptyMap();
-        return memoryData.getOrDefault(serverIp.trim(), Collections.emptyMap());
+        String normServer = normalizeServerAddress(serverIp);
+        Map<String, AccountData> accs = memoryData.get(normServer);
+        if (accs != null) return accs;
+
+        String rawServer = serverIp.trim();
+        if (!rawServer.equals(normServer)) {
+            accs = memoryData.get(rawServer);
+            if (accs != null) return accs;
+        }
+
+        return memoryData.getOrDefault(normServer + ":25565", Collections.emptyMap());
     }
 
     public static Map<String, Map<String, AccountData>> getAllData() {
@@ -143,22 +185,40 @@ public class PasswordManager {
 
     public static synchronized void removePassword(String serverIp, String username) {
         if (serverIp == null || username == null) return;
-        String cleanServer = serverIp.trim();
+        String normServer = normalizeServerAddress(serverIp);
+        String rawServer = serverIp.trim();
         String cleanUser = username.trim();
 
-        Map<String, AccountData> serverAccounts = memoryData.get(cleanServer);
-        if (serverAccounts != null) {
-            serverAccounts.remove(cleanUser);
-            if (serverAccounts.isEmpty()) {
-                memoryData.remove(cleanServer);
-            }
+        boolean changed = removePasswordFromMap(normServer, cleanUser);
+        if (!rawServer.equals(normServer)) {
+            changed |= removePasswordFromMap(rawServer, cleanUser);
+        }
+        changed |= removePasswordFromMap(normServer + ":25565", cleanUser);
+
+        if (changed) {
             saveToFile();
         }
     }
 
+    private static boolean removePasswordFromMap(String serverKey, String user) {
+        Map<String, AccountData> serverAccounts = memoryData.get(serverKey);
+        if (serverAccounts != null) {
+            serverAccounts.remove(user);
+            if (serverAccounts.isEmpty()) {
+                memoryData.remove(serverKey);
+            }
+            return true;
+        }
+        return false;
+    }
+
     public static synchronized void unmarkSynced(String serverIp, String username) {
         if (serverIp == null || username == null) return;
-        Map<String, AccountData> serverAccounts = memoryData.get(serverIp.trim());
+        String normServer = normalizeServerAddress(serverIp);
+        Map<String, AccountData> serverAccounts = memoryData.get(normServer);
+        if (serverAccounts == null) {
+            serverAccounts = memoryData.get(serverIp.trim());
+        }
         if (serverAccounts != null) {
             AccountData old = serverAccounts.get(username.trim());
             if (old != null) {
@@ -230,7 +290,9 @@ public class PasswordManager {
                     if (loadedData != null) {
                         memoryData.clear();
                         for (Map.Entry<String, Map<String, AccountData>> entry : loadedData.entrySet()) {
-                            memoryData.put(entry.getKey(), new ConcurrentHashMap<>(entry.getValue()));
+                            String normKey = normalizeServerAddress(entry.getKey());
+                            Map<String, AccountData> currentMap = memoryData.computeIfAbsent(normKey, k -> new ConcurrentHashMap<>());
+                            currentMap.putAll(entry.getValue());
                         }
                     }
                 }

@@ -14,6 +14,7 @@ import org.lwjgl.glfw.GLFW;
 
 public class SYPassClient implements ClientModInitializer {
 	private static KeyBinding openGuiKeyBinding;
+	private static KeyBinding quickLoginKeyBinding;
 
 	@Override
 	public void onInitializeClient() {
@@ -29,11 +30,21 @@ public class SYPassClient implements ClientModInitializer {
 				"category.sypass.title"
 		));
 
+		quickLoginKeyBinding = KeyBindingHelper.registerKeyBinding(new KeyBinding(
+				"key.sypass.quick_login",
+				InputUtil.Type.KEYSYM,
+				GLFW.GLFW_KEY_K,
+				"category.sypass.title"
+		));
+
 		ClientTickEvents.END_CLIENT_TICK.register(client -> {
 			while (openGuiKeyBinding.wasPressed()) {
 				if (client.currentScreen == null) {
 					client.setScreen(new SYPassScreen(null));
 				}
+			}
+			while (quickLoginKeyBinding.wasPressed()) {
+				AutoLoginHandler.executeManualLogin(client);
 			}
 		});
 	}

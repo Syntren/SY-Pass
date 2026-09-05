@@ -582,7 +582,13 @@ public class BitwardenManager {
 
             BwResult result = executeBwCommand("list", "items");
             if (result == null || result.exitCode() != 0 || result.output().isBlank()) {
-                String err = result != null ? result.output().trim() : "Немає відповіді від CLI";
+                String rawErr = result != null ? result.output().trim() : "";
+                if (rawErr.toLowerCase().contains("vault is locked") || rawErr.toLowerCase().contains("not logged in")) {
+                    setSessionKey("", true);
+                    invalidateStatusCache();
+                    return new BwSyncResult(false, 0, Text.translatable("sypass.gui.bw.sync.vault_locked").getString());
+                }
+                String err = !rawErr.isBlank() ? rawErr : "Немає відповіді від CLI";
                 return new BwSyncResult(false, 0, Text.translatable("sypass.gui.bw.sync.fetch_failed", err).getString());
             }
 
@@ -672,6 +678,14 @@ public class BitwardenManager {
 
             Map<String, String> existingItemIds = new HashMap<>();
             BwResult listResult = executeBwCommand("list", "items");
+            if (listResult != null && listResult.exitCode() != 0) {
+                String rawErr = listResult.output().trim();
+                if (rawErr.toLowerCase().contains("vault is locked") || rawErr.toLowerCase().contains("not logged in")) {
+                    setSessionKey("", true);
+                    invalidateStatusCache();
+                    return new BwSyncResult(false, 0, Text.translatable("sypass.gui.bw.sync.vault_locked").getString());
+                }
+            }
             if (listResult != null && listResult.exitCode() == 0 && !listResult.output().isBlank()) {
                 try {
                     String jsonStr = extractJson(listResult.output());
@@ -906,6 +920,12 @@ public class BitwardenManager {
                     PasswordManager.savePassword(serverIp, username, password, command, true, finalId);
                 }
                 return finalId;
+            } else if (res != null) {
+                String out = res.output().toLowerCase();
+                if (out.contains("vault is locked") || out.contains("not logged in")) {
+                    setSessionKey("", true);
+                    invalidateStatusCache();
+                }
             }
             return null;
         } catch (Exception e) {

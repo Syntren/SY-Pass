@@ -18,7 +18,9 @@ public class SYPassConfig {
     private static ConfigData data = new ConfigData();
 
     public static class ConfigData {
+        public boolean autoLogin = true;
         public boolean autoSync = true;
+        public boolean showToasts = true;
         public int autoLoginDelayTicks = 30;
         public String customServerUrl = "";
         public boolean smartAutoLogin = true;
@@ -59,12 +61,30 @@ public class SYPassConfig {
         }
     }
 
+    public static boolean isAutoLoginEnabled() {
+        return data.autoLogin;
+    }
+
+    public static void setAutoLoginEnabled(boolean enabled) {
+        data.autoLogin = enabled;
+        save();
+    }
+
     public static boolean isAutoSyncEnabled() {
         return data.autoSync;
     }
 
     public static void setAutoSyncEnabled(boolean enabled) {
         data.autoSync = enabled;
+        save();
+    }
+
+    public static boolean isToastsEnabled() {
+        return data.showToasts;
+    }
+
+    public static void setToastsEnabled(boolean enabled) {
+        data.showToasts = enabled;
         save();
     }
 

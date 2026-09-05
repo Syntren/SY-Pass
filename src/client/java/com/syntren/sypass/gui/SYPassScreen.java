@@ -1186,10 +1186,22 @@ public class SYPassScreen extends BaseOwoScreen<FlowLayout> {
             case MAIN -> {
                 mainCard.child(Components.label(Text.translatable("sypass.gui.settings.title").formatted(Formatting.GOLD, Formatting.BOLD)).shadow(true).margins(Insets.bottom(2)));
 
-                // Рядок 1: Авто-синхронізація (ліворуч) та Резервне копіювання (праворуч)
+                // Рядок 1: Авто-вхід (ліворуч) та Авто-синхронізація (праворуч)
                 FlowLayout row1 = Containers.horizontalFlow(Sizing.fill(100), Sizing.fixed(20));
                 row1.gap(8);
                 row1.horizontalAlignment(HorizontalAlignment.CENTER);
+
+                boolean autoLogin = com.syntren.sypass.config.SYPassConfig.isAutoLoginEnabled();
+                ButtonComponent autoLoginToggle = Components.button(
+                        Text.translatable("sypass.gui.settings.autologin", autoLogin ? "§a" + Text.translatable("sypass.gui.settings.on").getString() : "§c" + Text.translatable("sypass.gui.settings.off").getString()),
+                        b -> {
+                            boolean newVal = !com.syntren.sypass.config.SYPassConfig.isAutoLoginEnabled();
+                            com.syntren.sypass.config.SYPassConfig.setAutoLoginEnabled(newVal);
+                            b.setMessage(Text.translatable("sypass.gui.settings.autologin", newVal ? "§a" + Text.translatable("sypass.gui.settings.on").getString() : "§c" + Text.translatable("sypass.gui.settings.off").getString()));
+                        }
+                );
+                autoLoginToggle.horizontalSizing(Sizing.fixed(colWidth));
+                autoLoginToggle.tooltip(Text.translatable("sypass.gui.settings.autologin.tooltip"));
 
                 boolean autoSync = com.syntren.sypass.config.SYPassConfig.isAutoSyncEnabled();
                 ButtonComponent syncToggle = Components.button(
@@ -1203,6 +1215,60 @@ public class SYPassScreen extends BaseOwoScreen<FlowLayout> {
                 syncToggle.horizontalSizing(Sizing.fixed(colWidth));
                 syncToggle.tooltip(Text.translatable("sypass.gui.settings.autosync.tooltip"));
 
+                row1.child(autoLoginToggle);
+                row1.child(syncToggle);
+                mainCard.child(row1);
+
+                // Рядок 2: Розумний авто-вхід (ліворуч) та Розумна авто-реєстрація (праворуч)
+                FlowLayout row2 = Containers.horizontalFlow(Sizing.fill(100), Sizing.fixed(20));
+                row2.gap(8);
+                row2.horizontalAlignment(HorizontalAlignment.CENTER);
+
+                boolean smartLogin = com.syntren.sypass.config.SYPassConfig.isSmartAutoLoginEnabled();
+                ButtonComponent smartLoginToggle = Components.button(
+                        Text.translatable("sypass.gui.settings.smart_login", smartLogin ? "§a" + Text.translatable("sypass.gui.settings.on").getString() : "§c" + Text.translatable("sypass.gui.settings.off").getString()),
+                        b -> {
+                            boolean newVal = !com.syntren.sypass.config.SYPassConfig.isSmartAutoLoginEnabled();
+                            com.syntren.sypass.config.SYPassConfig.setSmartAutoLoginEnabled(newVal);
+                            b.setMessage(Text.translatable("sypass.gui.settings.smart_login", newVal ? "§a" + Text.translatable("sypass.gui.settings.on").getString() : "§c" + Text.translatable("sypass.gui.settings.off").getString()));
+                        }
+                );
+                smartLoginToggle.horizontalSizing(Sizing.fixed(colWidth));
+                smartLoginToggle.tooltip(Text.translatable("sypass.gui.settings.smart_login.tooltip"));
+
+                boolean smartRegister = com.syntren.sypass.config.SYPassConfig.isSmartAutoRegisterEnabled();
+                ButtonComponent smartRegisterToggle = Components.button(
+                        Text.translatable("sypass.gui.settings.smart_register", smartRegister ? "§a" + Text.translatable("sypass.gui.settings.on").getString() : "§c" + Text.translatable("sypass.gui.settings.off").getString()),
+                        b -> {
+                            boolean newVal = !com.syntren.sypass.config.SYPassConfig.isSmartAutoRegisterEnabled();
+                            com.syntren.sypass.config.SYPassConfig.setSmartAutoRegisterEnabled(newVal);
+                            b.setMessage(Text.translatable("sypass.gui.settings.smart_register", newVal ? "§a" + Text.translatable("sypass.gui.settings.on").getString() : "§c" + Text.translatable("sypass.gui.settings.off").getString()));
+                        }
+                );
+                smartRegisterToggle.horizontalSizing(Sizing.fixed(colWidth));
+                smartRegisterToggle.tooltip(Text.translatable("sypass.gui.settings.smart_register.tooltip"));
+
+                row2.child(smartLoginToggle);
+                row2.child(smartRegisterToggle);
+                mainCard.child(row2);
+
+                // Рядок 3: Сповіщення / Toasts (ліворуч) та Резервне копіювання (праворуч)
+                FlowLayout row3 = Containers.horizontalFlow(Sizing.fill(100), Sizing.fixed(20));
+                row3.gap(8);
+                row3.horizontalAlignment(HorizontalAlignment.CENTER);
+
+                boolean toasts = com.syntren.sypass.config.SYPassConfig.isToastsEnabled();
+                ButtonComponent toastsToggle = Components.button(
+                        Text.translatable("sypass.gui.settings.toasts", toasts ? "§a" + Text.translatable("sypass.gui.settings.on").getString() : "§c" + Text.translatable("sypass.gui.settings.off").getString()),
+                        b -> {
+                            boolean newVal = !com.syntren.sypass.config.SYPassConfig.isToastsEnabled();
+                            com.syntren.sypass.config.SYPassConfig.setToastsEnabled(newVal);
+                            b.setMessage(Text.translatable("sypass.gui.settings.toasts", newVal ? "§a" + Text.translatable("sypass.gui.settings.on").getString() : "§c" + Text.translatable("sypass.gui.settings.off").getString()));
+                        }
+                );
+                toastsToggle.horizontalSizing(Sizing.fixed(colWidth));
+                toastsToggle.tooltip(Text.translatable("sypass.gui.settings.toasts.tooltip"));
+
                 ButtonComponent backupMenuBtn = Components.button(
                         Text.translatable("sypass.gui.settings.backup.menu_btn"),
                         b -> {
@@ -1213,14 +1279,14 @@ public class SYPassScreen extends BaseOwoScreen<FlowLayout> {
                 backupMenuBtn.horizontalSizing(Sizing.fixed(colWidth));
                 backupMenuBtn.tooltip(Text.translatable("sypass.gui.settings.backup.menu_btn.tooltip"));
 
-                row1.child(syncToggle);
-                row1.child(backupMenuBtn);
-                mainCard.child(row1);
+                row3.child(toastsToggle);
+                row3.child(backupMenuBtn);
+                mainCard.child(row3);
 
-                // Рядок 2: Затримка авто-входу (ліворуч) та Сервер Bitwarden (праворуч)
-                FlowLayout row2 = Containers.horizontalFlow(Sizing.fill(100), Sizing.content());
-                row2.gap(8);
-                row2.horizontalAlignment(HorizontalAlignment.CENTER);
+                // Рядок 4: Затримка авто-входу (ліворуч) та Сервер Bitwarden (праворуч)
+                FlowLayout row4 = Containers.horizontalFlow(Sizing.fill(100), Sizing.content());
+                row4.gap(8);
+                row4.horizontalAlignment(HorizontalAlignment.CENTER);
 
                 // Ліва колонка (Затримка)
                 FlowLayout delayCol = Containers.verticalFlow(Sizing.fixed(colWidth), Sizing.content());
@@ -1305,47 +1371,14 @@ public class SYPassScreen extends BaseOwoScreen<FlowLayout> {
                 serverRow.child(saveServerBtn);
                 serverCol.child(serverRow);
 
-                row2.child(delayCol);
-                row2.child(serverCol);
-                mainCard.child(row2);
+                row4.child(delayCol);
+                row4.child(serverCol);
+                mainCard.child(row4);
 
-                // Рядок 3: Розумний авто-вхід (ліворуч) та Розумна авто-реєстрація (праворуч)
-                FlowLayout row3 = Containers.horizontalFlow(Sizing.fill(100), Sizing.fixed(20));
-                row3.gap(8);
-                row3.horizontalAlignment(HorizontalAlignment.CENTER);
-
-                boolean smartLogin = com.syntren.sypass.config.SYPassConfig.isSmartAutoLoginEnabled();
-                ButtonComponent smartLoginToggle = Components.button(
-                        Text.translatable("sypass.gui.settings.smart_login", smartLogin ? "§a" + Text.translatable("sypass.gui.settings.on").getString() : "§c" + Text.translatable("sypass.gui.settings.off").getString()),
-                        b -> {
-                            boolean newVal = !com.syntren.sypass.config.SYPassConfig.isSmartAutoLoginEnabled();
-                            com.syntren.sypass.config.SYPassConfig.setSmartAutoLoginEnabled(newVal);
-                            b.setMessage(Text.translatable("sypass.gui.settings.smart_login", newVal ? "§a" + Text.translatable("sypass.gui.settings.on").getString() : "§c" + Text.translatable("sypass.gui.settings.off").getString()));
-                        }
-                );
-                smartLoginToggle.horizontalSizing(Sizing.fixed(colWidth));
-                smartLoginToggle.tooltip(Text.translatable("sypass.gui.settings.smart_login.tooltip"));
-
-                boolean smartRegister = com.syntren.sypass.config.SYPassConfig.isSmartAutoRegisterEnabled();
-                ButtonComponent smartRegisterToggle = Components.button(
-                        Text.translatable("sypass.gui.settings.smart_register", smartRegister ? "§a" + Text.translatable("sypass.gui.settings.on").getString() : "§c" + Text.translatable("sypass.gui.settings.off").getString()),
-                        b -> {
-                            boolean newVal = !com.syntren.sypass.config.SYPassConfig.isSmartAutoRegisterEnabled();
-                            com.syntren.sypass.config.SYPassConfig.setSmartAutoRegisterEnabled(newVal);
-                            b.setMessage(Text.translatable("sypass.gui.settings.smart_register", newVal ? "§a" + Text.translatable("sypass.gui.settings.on").getString() : "§c" + Text.translatable("sypass.gui.settings.off").getString()));
-                        }
-                );
-                smartRegisterToggle.horizontalSizing(Sizing.fixed(colWidth));
-                smartRegisterToggle.tooltip(Text.translatable("sypass.gui.settings.smart_register.tooltip"));
-
-                row3.child(smartLoginToggle);
-                row3.child(smartRegisterToggle);
-                mainCard.child(row3);
-
-                // Рядок 4: Генератор пароля (ліворуч) та Відкрити папку (праворуч)
-                FlowLayout row4 = Containers.horizontalFlow(Sizing.fill(100), Sizing.fixed(20));
-                row4.gap(8);
-                row4.horizontalAlignment(HorizontalAlignment.CENTER);
+                // Рядок 5: Генератор пароля (ліворуч) та Відкрити папку (праворуч)
+                FlowLayout row5 = Containers.horizontalFlow(Sizing.fill(100), Sizing.fixed(20));
+                row5.gap(8);
+                row5.horizontalAlignment(HorizontalAlignment.CENTER);
 
                 ButtonComponent quickGenBtn = Components.button(Text.translatable("sypass.gui.settings.quick_gen"), b -> {
                     String gen = com.syntren.sypass.util.PasswordGenerator.generateDefault();
@@ -1362,9 +1395,9 @@ public class SYPassScreen extends BaseOwoScreen<FlowLayout> {
                 });
                 openFolderBtn.horizontalSizing(Sizing.fixed(colWidth));
 
-                row4.child(quickGenBtn);
-                row4.child(openFolderBtn);
-                mainCard.child(row4);
+                row5.child(quickGenBtn);
+                row5.child(openFolderBtn);
+                mainCard.child(row5);
             }
             case BACKUP -> {
                 mainCard.child(Components.label(Text.translatable("sypass.gui.settings.backup.title").formatted(Formatting.GOLD, Formatting.BOLD)).shadow(true).margins(Insets.bottom(2)));

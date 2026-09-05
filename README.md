@@ -7,7 +7,7 @@
 ## 🚀 Features
 
 - **🔑 Local Password Storage:** Store, reveal, copy, edit, and manage credentials for each Minecraft server. All data is securely encrypted using **AES-256-GCM** in `config/sypass/sypass.json`.
-- **⚡ Smart & Automated Server Login:** Automatically logs into servers upon connection. Includes **Smart Auto-Login** that scans server chat and action bar prompts (`/login`, `/l`) to authenticate dynamically without unnecessary delays, as well as a dedicated **Quick Re-Login hotkey (`K`)** for on-demand authentication.
+- **⚡ Smart & Automated Server Login:** Automatically logs into servers upon connection (can be fully toggled on/off in Settings). Includes **Smart Auto-Login** that scans server chat and action bar prompts (`/login`, `/l`) to authenticate dynamically without unnecessary delays, as well as a dedicated **Quick Re-Login hotkey (`K`)** for on-demand authentication.
 - **✨ Quick & Smart Auto-Registration:** One-step registration on servers (`/sypass register [len]` or `/sypass quickreg`). Generates a cryptographically secure password, copies it to the clipboard, saves it locally, syncs to Bitwarden, and submits the `/register <password> <password>` command. Enable **Smart Auto-Register** in Settings to perform this automatically when registration prompts are detected!
 - **🌐 Smart Server Address Matching:** Automatically normalizes server IP addresses and hostnames, seamlessly matching entries regardless of default ports (`:25565`) or case variations.
 - **☁️ Bitwarden Cloud Sync:** Full two-way synchronization (Pull, Push, Full Sync) with your Bitwarden vault. Includes one-click deletion of specific cloud entries directly from the password list.
@@ -21,7 +21,7 @@
   - `/sypass register [length]` (or `/sypass quickreg`) — Quick-register on the current server with an auto-generated password.
   - `/sypass remove` — Remove saved password for the current server.
   - `/sypass generate [length]` — Generate a strong password and copy to clipboard.
-- **🎨 Polished UI & ModMenu:** Built with **oωo-lib** with animated status indicators and full **ModMenu** support. Default hotkeys: **`P`** (open GUI), **`K`** (quick login), and an optional customizable keybinding for **Quick Register**.
+- **🎨 Polished UI & ModMenu:** Built with **oωo-lib** with animated status indicators, configurable in-game notifications (toasts toggle), and full **ModMenu** support. Default hotkeys: **`P`** (open GUI), **`K`** (quick login), and an optional customizable keybinding for **Quick Register**.
 - **🌐 Multilingual:** Full localization for Ukrainian (`uk_ua`), English (`en_us`), and Russian (`ru_ru`).
 
 ---

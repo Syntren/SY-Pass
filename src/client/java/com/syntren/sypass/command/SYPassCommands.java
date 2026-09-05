@@ -3,6 +3,7 @@ package com.syntren.sypass.command;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.context.CommandContext;
 import com.syntren.sypass.config.SYPassConfig;
+import com.syntren.sypass.handler.AutoLoginHandler;
 import com.syntren.sypass.storage.BitwardenManager;
 import com.syntren.sypass.storage.PasswordManager;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandManager;
@@ -39,6 +40,18 @@ public class SYPassCommands {
                                     .executes(context -> generatePassword(context, com.mojang.brigadier.arguments.IntegerArgumentType.getInteger(context, "length")))
                             )
                     )
+                    .then(ClientCommandManager.literal("register")
+                            .executes(context -> quickRegister(context, 16))
+                            .then(ClientCommandManager.argument("length", com.mojang.brigadier.arguments.IntegerArgumentType.integer(6, 64))
+                                    .executes(context -> quickRegister(context, com.mojang.brigadier.arguments.IntegerArgumentType.getInteger(context, "length")))
+                            )
+                    )
+                    .then(ClientCommandManager.literal("quickreg")
+                            .executes(context -> quickRegister(context, 16))
+                            .then(ClientCommandManager.argument("length", com.mojang.brigadier.arguments.IntegerArgumentType.integer(6, 64))
+                                    .executes(context -> quickRegister(context, com.mojang.brigadier.arguments.IntegerArgumentType.getInteger(context, "length")))
+                            )
+                    )
             );
         });
     }
@@ -53,6 +66,19 @@ public class SYPassCommands {
                 Text.translatable("sypass.toast.generator.title"),
                 Text.translatable("sypass.toast.generator.desc")
         );
+        return 1;
+    }
+
+    private static int quickRegister(CommandContext<FabricClientCommandSource> context, int length) {
+        ServerInfo server = context.getSource().getClient().getCurrentServerEntry();
+        if (server == null) {
+            context.getSource().sendError(Text.translatable("sypass.command.server_only"));
+            return 0;
+        }
+
+        String username = context.getSource().getClient().getSession().getUsername();
+        AutoLoginHandler.executeQuickRegister(context.getSource().getClient(), length);
+        context.getSource().sendFeedback(Text.translatable("sypass.command.registered", username, server.address));
         return 1;
     }
 

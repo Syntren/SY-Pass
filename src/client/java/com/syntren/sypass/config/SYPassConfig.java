@@ -21,6 +21,8 @@ public class SYPassConfig {
         public boolean autoSync = true;
         public int autoLoginDelayTicks = 30;
         public String customServerUrl = "";
+        public boolean smartAutoLogin = true;
+        public boolean smartAutoRegister = false;
     }
 
     public static void load() {
@@ -81,6 +83,24 @@ public class SYPassConfig {
 
     public static void setCustomServerUrl(String url) {
         data.customServerUrl = url != null ? url.trim() : "";
+        save();
+    }
+
+    public static boolean isSmartAutoLoginEnabled() {
+        return data.smartAutoLogin;
+    }
+
+    public static void setSmartAutoLoginEnabled(boolean enabled) {
+        data.smartAutoLogin = enabled;
+        save();
+    }
+
+    public static boolean isSmartAutoRegisterEnabled() {
+        return data.smartAutoRegister;
+    }
+
+    public static void setSmartAutoRegisterEnabled(boolean enabled) {
+        data.smartAutoRegister = enabled;
         save();
     }
 }

@@ -243,12 +243,12 @@ public class AutoLoginHandler {
     /**
      * Quick register with generated password, auto-save, clipboard copy, and Bitwarden sync
      */
-    public static void executeQuickRegister(MinecraftClient client, int length) {
-        executeQuickRegister(client, length, false);
+    public static boolean executeQuickRegister(MinecraftClient client, int length) {
+        return executeQuickRegister(client, length, false);
     }
 
-    public static void executeQuickRegister(MinecraftClient client, int length, boolean isSmart) {
-        if (client == null || client.player == null) return;
+    public static boolean executeQuickRegister(MinecraftClient client, int length, boolean isSmart) {
+        if (client == null || client.player == null) return false;
 
         ServerInfo server = client.getCurrentServerEntry();
         if (server == null) {
@@ -257,11 +257,22 @@ public class AutoLoginHandler {
                     Text.translatable("sypass.toast.quicklogin.not_server"),
                     new ItemStack(Items.BARRIER)
             );
-            return;
+            return false;
         }
 
         String username = client.getSession().getUsername();
         String serverIp = server.address;
+
+        if (SYPassConfig.isPreventRegisterOverwriteEnabled() && PasswordManager.hasPassword(serverIp, username)) {
+            SYPassToast.show(
+                    Text.translatable(isSmart ? "sypass.toast.smartregister.title" : "sypass.toast.quickregister.title"),
+                    Text.translatable("sypass.toast.quickregister.already_exists", username),
+                    new ItemStack(Items.BARRIER)
+            );
+            client.player.sendMessage(Text.translatable("sypass.chat.register.already_exists", username, serverIp), false);
+            return false;
+        }
+
         int passLen = Math.max(6, Math.min(64, length));
         String generatedPassword = PasswordGenerator.generate(passLen);
 
@@ -289,5 +300,6 @@ public class AutoLoginHandler {
         );
 
         hasLoggedInThisSession = true;
+        return true;
     }
 }

@@ -25,6 +25,7 @@ public class SYPassConfig {
         public String customServerUrl = "";
         public boolean smartAutoLogin = true;
         public boolean smartAutoRegister = false;
+        public boolean preventRegisterOverwrite = true;
     }
 
     public static void load() {
@@ -121,6 +122,15 @@ public class SYPassConfig {
 
     public static void setSmartAutoRegisterEnabled(boolean enabled) {
         data.smartAutoRegister = enabled;
+        save();
+    }
+
+    public static boolean isPreventRegisterOverwriteEnabled() {
+        return data.preventRegisterOverwrite;
+    }
+
+    public static void setPreventRegisterOverwriteEnabled(boolean enabled) {
+        data.preventRegisterOverwrite = enabled;
         save();
     }
 }

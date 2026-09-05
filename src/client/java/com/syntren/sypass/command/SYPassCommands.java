@@ -77,9 +77,12 @@ public class SYPassCommands {
         }
 
         String username = context.getSource().getClient().getSession().getUsername();
-        AutoLoginHandler.executeQuickRegister(context.getSource().getClient(), length);
-        context.getSource().sendFeedback(Text.translatable("sypass.command.registered", username, server.address));
-        return 1;
+        boolean success = AutoLoginHandler.executeQuickRegister(context.getSource().getClient(), length);
+        if (success) {
+            context.getSource().sendFeedback(Text.translatable("sypass.command.registered", username, server.address));
+            return 1;
+        }
+        return 0;
     }
 
     private static int savePassword(CommandContext<FabricClientCommandSource> context, String password, String command) {

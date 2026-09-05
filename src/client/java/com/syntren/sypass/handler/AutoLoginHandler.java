@@ -62,6 +62,10 @@ public class AutoLoginHandler {
             lastLoginAttemptMs = 0;
             lastRegisterAttemptMs = 0;
 
+            if (!SYPassConfig.isAutoLoginEnabled()) {
+                return;
+            }
+
             PasswordManager.AccountData entry = PasswordManager.getPassword(currentServerIp, username);
             if (entry != null) {
                 pendingEntry = entry;
@@ -128,7 +132,7 @@ public class AutoLoginHandler {
         boolean hasSavedAccount = PasswordManager.hasPassword(currentServerIp, username);
 
         // Case 1: Account exists -> Smart Auto-Login
-        if (hasSavedAccount && SYPassConfig.isSmartAutoLoginEnabled()) {
+        if (hasSavedAccount && SYPassConfig.isAutoLoginEnabled() && SYPassConfig.isSmartAutoLoginEnabled()) {
             if (LOGIN_PROMPT_PATTERN.matcher(cleanText).find()) {
                 if (now - lastLoginAttemptMs > 4000 && loginAttemptsThisSession < 3) {
                     lastLoginAttemptMs = now;
@@ -147,7 +151,7 @@ public class AutoLoginHandler {
         }
 
         // Case 2: No account exists -> Smart Auto-Register or Prompt Toast
-        if (!hasSavedAccount) {
+        if (!hasSavedAccount && SYPassConfig.isAutoLoginEnabled()) {
             if (REGISTER_PROMPT_PATTERN.matcher(cleanText).find()) {
                 if (SYPassConfig.isSmartAutoRegisterEnabled()) {
                     if (now - lastRegisterAttemptMs > 5000 && registerAttemptsThisSession < 2) {

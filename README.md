@@ -7,13 +7,14 @@
 ## 🚀 Features
 
 - **🔑 Local Password Storage:** Store, reveal, copy, edit, and manage credentials for each Minecraft server. All data is securely encrypted using **AES-256-GCM** in `config/sypass/sypass.json`.
-- **⚡ Automated Server Login:** Automatically executes login commands (e.g., `/login <password>`) upon server join with configurable tick delay and sub-server transition protection (BungeeCord / Velocity).
+- **⚡ Automated & Quick Server Login:** Automatically executes login commands (e.g., `/login <password>`) upon server join with configurable tick delay and sub-server transition protection (BungeeCord / Velocity). Includes a dedicated **Quick Re-Login hotkey (`K`)** for instant on-demand authentication.
+- **🌐 Smart Server Address Matching:** Automatically normalizes server IP addresses and hostnames, seamlessly matching entries regardless of default ports (`:25565`) or case variations.
 - **☁️ Bitwarden Cloud Sync:** Full two-way synchronization (Pull, Push, Full Sync) with your Bitwarden vault. Includes one-click deletion of specific cloud entries directly from the password list.
 - **🛡️ Multi-Factor Authentication (2FA):** Native support for both **Authenticator App (TOTP)** and **Email 2FA** (with in-GUI "Send Code" support) as well as API Key login.
 - **📥 In-Game CLI Downloader:** Automatically downloads, extracts, and configures the official Bitwarden CLI executable for your platform (Linux, Windows, macOS) with animated progress indicators.
 - **🎲 Password Generator:** Generate strong, cryptographically secure passwords (`/sypass generate [len]` or via GUI).
 - **💻 Client Commands:** Convenient in-game commands: `/sypass set <password>`, `/sypass setcustom <cmd> <pass>`, `/sypass remove`, `/sypass generate`.
-- **🎨 Polished UI & ModMenu:** Built with **oωo-lib** with animated status indicators and full **ModMenu** support. Default hotkey: **`P`**.
+- **🎨 Polished UI & ModMenu:** Built with **oωo-lib** with animated status indicators and full **ModMenu** support. Default hotkeys: **`P`** (open GUI) and **`K`** (quick login).
 - **🌐 Multilingual:** Full localization for Ukrainian (`uk_ua`), English (`en_us`), and Russian (`ru_ru`).
 
 ---

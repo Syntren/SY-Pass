@@ -679,13 +679,6 @@ public class SYPassScreen extends BaseOwoScreen<FlowLayout> {
                 methodRow.child(emailBtn);
                 mainCard.child(methodRow);
 
-                if ("1".equals(selected2faMethod)) {
-                    ButtonComponent sendEmailBtn = Components.button(Text.translatable("sypass.gui.bw.otp.send_email"), b -> handleSendEmail2fa());
-                    sendEmailBtn.horizontalSizing(Sizing.fill(100));
-                    sendEmailBtn.margins(Insets.bottom(2));
-                    mainCard.child(sendEmailBtn);
-                }
-
                 TextBoxComponent otpField = Components.textBox(Sizing.fill(100));
                 otpField.setMaxLength(32);
                 otpField.setPlaceholder(Text.translatable("sypass.gui.bw.otp.placeholder"));
@@ -698,12 +691,21 @@ public class SYPassScreen extends BaseOwoScreen<FlowLayout> {
                 confirmOtpBtn.horizontalSizing(Sizing.fill(100));
                 mainCard.child(confirmOtpBtn);
 
+                if ("1".equals(selected2faMethod)) {
+                    ButtonComponent sendEmailBtn = Components.button(Text.translatable("sypass.gui.bw.otp.send_email"), b -> handleSendEmail2fa());
+                    sendEmailBtn.horizontalSizing(Sizing.fill(100));
+                    sendEmailBtn.tooltip(Text.translatable("sypass.gui.bw.otp.send_email_tooltip"));
+                    sendEmailBtn.margins(Insets.top(2));
+                    mainCard.child(sendEmailBtn);
+                }
+
                 ButtonComponent backBtn = Components.button(Text.translatable("sypass.gui.bw.otp.back"), b -> {
                     bwStage = BwStage.LOGIN;
                     statusMessage = "";
                     rebuildUI();
                 });
                 backBtn.horizontalSizing(Sizing.fill(100));
+                backBtn.margins(Insets.top(2));
                 mainCard.child(backBtn);
             }
             case API_KEY -> {

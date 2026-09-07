@@ -6,22 +6,23 @@
 
 ## 🚀 Features
 
-- **🔑 Local Password Storage:** Store, reveal, copy, edit, and manage credentials for each Minecraft server. All data is securely encrypted using **AES-256-GCM** in `config/sypass/sypass.json`.
-- **⚡ Smart & Automated Server Login:** Automatically logs into servers upon connection (can be fully toggled on/off in Settings). Includes **Smart Auto-Login** that scans server chat and action bar prompts (`/login`, `/l`) to authenticate dynamically without unnecessary delays, as well as a dedicated **Quick Re-Login hotkey (`K`)** for on-demand authentication.
+- **🔑 Hardened Local Storage:** Store, reveal, copy, edit, and manage credentials for each Minecraft server. All data is securely encrypted using **AES-256-GCM** in `config/sypass/sypass.json` with strict owner-only file permissions (`0600`), atomic writes to eliminate file truncation risks, and seamless automatic migration from legacy vaults.
+- **🔒 Process Argument Isolation (Zero-Leakage):** Communicates with Bitwarden CLI strictly via standard input (`stdin`) rather than command-line arguments. Passwords, session tokens, and vault payloads are completely hidden from system process monitors (`ps`, Process Explorer) and audit logs.
+- **⚡ Smart & Automated Server Login:** Automatically logs into servers upon connection (can be fully toggled on/off in Settings). Includes **Smart Auto-Login** that scans server chat and action bar prompts (`/login`, `/l`) to authenticate dynamically without unnecessary delays, spoofing protection against player chat triggers, and a dedicated **Quick Re-Login hotkey (`K`)** for on-demand authentication.
 - **✨ Quick & Smart Auto-Registration:** One-step registration on servers (`/sypass register [len]` or `/sypass quickreg`). Generates a cryptographically secure password, copies it to the clipboard, saves it locally, syncs to Bitwarden, and submits the `/register <password> <password>` command. Includes built-in **Overwrite Protection** (configurable in Settings) to prevent accidental loss of existing credentials. Enable **Smart Auto-Register** in Settings to perform registration automatically when prompts are detected!
 - **🌐 Smart Server Address Matching:** Automatically normalizes server IP addresses and hostnames, seamlessly matching entries regardless of default ports (`:25565`) or case variations.
-- **☁️ Bitwarden Cloud Sync:** Full two-way synchronization (Pull, Push, Full Sync) with your Bitwarden vault. Includes one-click deletion of specific cloud entries directly from the password list.
+- **☁️ Bitwarden Cloud Sync:** Full two-way synchronization (Pull, Push, Full Sync) with your Bitwarden vault via a dedicated daemon worker pool, ensuring zero frame drops or render thread blocking. Includes one-click deletion of specific cloud entries directly from the password list.
 - **🛡️ Multi-Factor Authentication (2FA):** Native support for both **Authenticator App (TOTP)** and **Email 2FA** (with in-GUI "Send Code" support) as well as API Key login.
-- **📥 In-Game CLI Downloader:** Automatically downloads, extracts, and configures the official Bitwarden CLI executable for your platform (Linux, Windows, macOS) with animated progress indicators.
+- **📥 Secure In-Game CLI Downloader:** Automatically downloads, extracts, and configures the official Bitwarden CLI executable for your platform (Linux, Windows, macOS) with animated progress indicators, HTTPS redirect allowlist domain verification, and binary header validation.
 - **🎲 Password Generator:** Generate strong, cryptographically secure passwords (`/sypass generate [len]` or via GUI).
-- **💾 Local Encrypted Backups:** Export and import password backups with optional password-based encryption.
+- **💾 Local Encrypted Backups:** Export and import password backups with optional password-based encryption or portable unencrypted backups with restricted local filesystem permissions.
 - **💻 Client Commands:**
   - `/sypass set <password>` — Save password for the current server.
   - `/sypass setcustom <command> <password>` — Save password with a custom authentication command.
   - `/sypass register [length]` (or `/sypass quickreg`) — Quick-register on the current server with an auto-generated password.
   - `/sypass remove` — Remove saved password for the current server.
   - `/sypass generate [length]` — Generate a strong password and copy to clipboard.
-- **🎨 Polished UI & ModMenu:** Built with **oωo-lib** with animated status indicators, configurable in-game notifications (toasts toggle), and full **ModMenu** support. Default hotkeys: **`P`** (open GUI), **`K`** (quick login), and an optional customizable keybinding for **Quick Register**.
+- **🎨 Polished UI & ModMenu:** Built with **oωo-lib** with animated status indicators, zero-scroll-reset clipboard copying, per-tick GC optimizations, configurable in-game notifications (toasts toggle), and full **ModMenu** support. Default hotkeys: **`P`** (open GUI), **`K`** (quick login), and an optional customizable keybinding for **Quick Register**.
 - **🌐 Multilingual:** Full localization for Ukrainian (`uk_ua`), English (`en_us`), and Russian (`ru_ru`).
 
 ---
@@ -47,7 +48,7 @@ To compile the mod, run:
 
 The compiled mod JAR will be placed in:
 ```
-build/libs/sypass-fabric-1.1.1-mc1.21-1.21.1.jar
+build/libs/sypass-fabric-1.2.0-mc1.21-1.21.1.jar
 ```
 
 ---

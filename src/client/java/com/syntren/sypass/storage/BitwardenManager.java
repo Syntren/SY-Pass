@@ -21,6 +21,8 @@ import java.nio.file.attribute.PosixFilePermission;
 import java.nio.file.attribute.PosixFilePermissions;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
@@ -34,9 +36,82 @@ public class BitwardenManager {
     public static final boolean IS_MAC = System.getProperty("os.name").toLowerCase().contains("mac") || System.getProperty("os.name").toLowerCase().contains("darwin");
     public static final Path LOCAL_CLI_PATH = CONFIG_DIR.resolve(IS_WINDOWS ? "bw.exe" : "bw");
 
+    private static final ExecutorService BW_EXECUTOR = Executors.newFixedThreadPool(
+            Math.max(2, Runtime.getRuntime().availableProcessors() / 2),
+            runnable -> {
+                Thread t = new Thread(runnable, "SYPass-BW-Worker");
+                t.setDaemon(true);
+                return t;
+            }
+    );
+
+    private static final Set<String> TRUSTED_DOWNLOAD_DOMAINS = Set.of(
+            "bitwarden.com",
+            "vault.bitwarden.com",
+            "github.com",
+            "objects.githubusercontent.com",
+            "github-releases.githubusercontent.com",
+            "release-assets.githubusercontent.com"
+    );
+
+    private static volatile String cachedExecutablePath = null;
     private static BwStatusInfo cachedStatus = null;
     private static long lastStatusQueryMs = 0;
     private static final long STATUS_CACHE_TTL_MS = 10000;
+
+    public static ExecutorService getExecutor() {
+        return BW_EXECUTOR;
+    }
+
+    public static String maskEmail(String email) {
+        if (email == null || !email.contains("@")) return "***";
+        int at = email.indexOf('@');
+        String name = email.substring(0, at);
+        String domain = email.substring(at);
+        String maskedName = (name.length() <= 2) ? "*" : name.charAt(0) + "***" + name.charAt(name.length() - 1);
+        return maskedName + domain;
+    }
+
+    private static boolean isTrustedDownloadDomain(String urlStr) {
+        try {
+            URI uri = URI.create(urlStr);
+            String host = uri.getHost();
+            if (host == null) return false;
+            String lowerHost = host.toLowerCase(Locale.ROOT);
+            for (String trusted : TRUSTED_DOWNLOAD_DOMAINS) {
+                if (lowerHost.equals(trusted) || lowerHost.endsWith("." + trusted)) {
+                    return true;
+                }
+            }
+        } catch (Exception ignored) {}
+        return false;
+    }
+
+    private static boolean verifyBinaryHeader(Path binaryPath) {
+        if (!Files.exists(binaryPath)) return false;
+        try (InputStream is = Files.newInputStream(binaryPath)) {
+            byte[] magic = new byte[4];
+            int read = is.read(magic);
+            if (read < 2) return false;
+
+            if (IS_WINDOWS) {
+                return magic[0] == 0x4D && magic[1] == 0x5A; // MZ header
+            } else if (IS_MAC) {
+                int b0 = magic[0] & 0xFF;
+                int b1 = magic[1] & 0xFF;
+                int b2 = magic[2] & 0xFF;
+                int b3 = magic[3] & 0xFF;
+                return (b0 == 0xCA && b1 == 0xFE && b2 == 0xBA && b3 == 0xBE)
+                        || (b0 == 0xFE && b1 == 0xED && b2 == 0xFA && (b3 == 0xCE || b3 == 0xCF))
+                        || ((b0 == 0xCE || b0 == 0xCF) && b1 == 0xFA && b2 == 0xED && b3 == 0xFE);
+            } else {
+                return magic[0] == 0x7F && magic[1] == 'E' && magic[2] == 'L' && magic[3] == 'F'; // ELF header
+            }
+        } catch (Exception e) {
+            LOGGER.warn("[SYPass] Failed to verify binary headers", e);
+            return false;
+        }
+    }
 
     public interface DownloadProgressListener {
         void onProgress(float progress, long downloadedBytes, long totalBytes, String statusText);
@@ -97,6 +172,7 @@ public class BitwardenManager {
 
     public static void invalidateStatusCache() {
         lastStatusQueryMs = 0;
+        cachedExecutablePath = null;
     }
 
     public static boolean isLocalCliInstalled() {
@@ -127,7 +203,7 @@ public class BitwardenManager {
     }
 
     public static void downloadAndInstallCliAsync(DownloadProgressListener listener) {
-        new Thread(() -> {
+        BW_EXECUTOR.execute(() -> {
             File tempZip = CONFIG_DIR.resolve("bw_temp.zip").toFile();
             try {
                 if (!Files.exists(CONFIG_DIR)) {
@@ -141,18 +217,26 @@ public class BitwardenManager {
                 HttpURLConnection connection = null;
                 int redirects = 0;
                 while (redirects < 6) {
+                    if (!isTrustedDownloadDomain(url.toString())) {
+                        throw new SecurityException("Untrusted download domain rejected: " + url.getHost());
+                    }
                     connection = (HttpURLConnection) url.openConnection();
                     connection.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36");
                     connection.setConnectTimeout(15000);
                     connection.setReadTimeout(30000);
-                    connection.setInstanceFollowRedirects(true);
+                    connection.setInstanceFollowRedirects(false);
                     int status = connection.getResponseCode();
                     if (status == HttpURLConnection.HTTP_MOVED_TEMP || status == HttpURLConnection.HTTP_MOVED_PERM || status == 307 || status == 308) {
                         String newUrl = connection.getHeaderField("Location");
+                        if (newUrl == null || !newUrl.startsWith("https://")) {
+                            throw new SecurityException("Insecure non-HTTPS redirect rejected");
+                        }
                         url = URI.create(newUrl).toURL();
                         redirects++;
-                    } else {
+                    } else if (status == HttpURLConnection.HTTP_OK) {
                         break;
+                    } else {
+                        throw new IOException("HTTP error response: " + status);
                     }
                 }
 
@@ -210,6 +294,13 @@ public class BitwardenManager {
                     return;
                 }
 
+                // Verify binary headers (magic bytes) to ensure authenticity and integrity
+                if (!verifyBinaryHeader(LOCAL_CLI_PATH)) {
+                    Files.deleteIfExists(LOCAL_CLI_PATH);
+                    listener.onError("Downloaded binary failed signature verification!");
+                    return;
+                }
+
                 if (!IS_WINDOWS) {
                     File cliFile = LOCAL_CLI_PATH.toFile();
                     cliFile.setExecutable(true, false);
@@ -237,12 +328,17 @@ public class BitwardenManager {
                 tempZip.delete();
                 listener.onError(Text.translatable("sypass.gui.bw.download.error.failed", e.getMessage()).getString());
             }
-        }).start();
+        });
     }
 
     public static String getCliExecutable() {
+        if (cachedExecutablePath != null) {
+            return cachedExecutablePath;
+        }
+
         if (isLocalCliInstalled()) {
-            return LOCAL_CLI_PATH.toAbsolutePath().toString();
+            cachedExecutablePath = LOCAL_CLI_PATH.toAbsolutePath().toString();
+            return cachedExecutablePath;
         }
 
         String userHome = System.getProperty("user.home", "");
@@ -273,7 +369,8 @@ public class BitwardenManager {
 
         for (Path path : candidatePaths) {
             if (Files.exists(path) && (IS_WINDOWS || Files.isExecutable(path))) {
-                return path.toAbsolutePath().toString();
+                cachedExecutablePath = path.toAbsolutePath().toString();
+                return cachedExecutablePath;
             }
         }
 
@@ -286,7 +383,8 @@ public class BitwardenManager {
                         for (File nodeVer : nodeVersions) {
                             Path bwInNode = nodeVer.toPath().resolve("bin/bw");
                             if (Files.exists(bwInNode) && Files.isExecutable(bwInNode)) {
-                                return bwInNode.toAbsolutePath().toString();
+                                cachedExecutablePath = bwInNode.toAbsolutePath().toString();
+                                return cachedExecutablePath;
                             }
                         }
                     }
@@ -294,7 +392,9 @@ public class BitwardenManager {
             }
         }
 
-        return IS_WINDOWS ? "bw.cmd" : "bw";
+        String fallback = IS_WINDOWS ? "bw.cmd" : "bw";
+        cachedExecutablePath = fallback;
+        return fallback;
     }
 
     public static boolean isCliInstalled() {
@@ -351,6 +451,17 @@ public class BitwardenManager {
     public static boolean configureServer(String serverUrl) {
         try {
             String target = (serverUrl != null && !serverUrl.isBlank()) ? serverUrl.trim() : "https://vault.bitwarden.com";
+            URI uri = URI.create(target);
+            String scheme = uri.getScheme();
+            if (scheme == null || (!scheme.equalsIgnoreCase("http") && !scheme.equalsIgnoreCase("https"))) {
+                LOGGER.error("[SYPass] Rejected invalid Bitwarden server protocol: {}", target);
+                return false;
+            }
+            if (target.contains("\"") || target.contains("&") || target.contains("|") || target.contains(";") || target.contains("^")) {
+                LOGGER.error("[SYPass] Rejected dangerous characters in server URL");
+                return false;
+            }
+
             BwResult res = executeBwCommand("config", "server", target);
             invalidateStatusCache();
             return res != null && res.exitCode() == 0;
@@ -385,7 +496,7 @@ public class BitwardenManager {
             }
 
             if (statusInfo.isLocked() && statusInfo.userEmail().equalsIgnoreCase(email)) {
-                LOGGER.info("[SYPass] Attempting secure unlock for {}", email);
+                LOGGER.info("[SYPass] Attempting secure unlock for {}", maskEmail(email));
                 Map<String, String> unlockEnv = Map.of("BW_PASSWORD", password);
                 BwResult unlockResult = executeBwCommandWithEnv(unlockEnv, "unlock", "--passwordenv", "BW_PASSWORD", "--raw");
                 String unlockedKey = unlockResult != null ? extractSessionKey(unlockResult.output()) : "";
@@ -444,11 +555,11 @@ public class BitwardenManager {
 
         if (otp != null && !otp.isBlank()) {
             args.add("--code");
-            args.add(otp.trim());
+            args.add(otp.trim().replaceAll("[^0-9a-zA-Z]", ""));
         }
         args.add("--raw");
 
-        LOGGER.info("[SYPass] Sending secure login command for: {} (hasOtp={}, method={})", email, hasOtp, method);
+        LOGGER.info("[SYPass] Sending secure login command for: {} (hasOtp={}, method={})", maskEmail(email), hasOtp, method);
         Map<String, String> env = new HashMap<>();
         env.put("BW_PASSWORD", password);
         BwResult result = executeBwCommandWithEnv(env, args.toArray(new String[0]));
@@ -822,7 +933,7 @@ public class BitwardenManager {
                 LOGGER.error("[SYPass] Failed background single push", e);
                 return false;
             }
-        });
+        }, BW_EXECUTOR);
     }
 
     public static CompletableFuture<Boolean> deleteSingleItemAsync(String serverIp, String username) {
@@ -850,7 +961,7 @@ public class BitwardenManager {
                 LOGGER.error("[SYPass] Failed background single delete", e);
             }
             return false;
-        });
+        }, BW_EXECUTOR);
     }
 
     public static CompletableFuture<Boolean> deleteFromBitwardenOnlyAsync(String serverIp, String username, String knownRemoteId) {
@@ -877,7 +988,7 @@ public class BitwardenManager {
                 LOGGER.error("[SYPass] Failed background single delete from Bitwarden", e);
             }
             return false;
-        });
+        }, BW_EXECUTOR);
     }
 
     private static String createOrUpdateBitwardenItem(String existingId, String serverIp, String username, String password, String command) {
@@ -903,11 +1014,12 @@ public class BitwardenManager {
             item.add("login", login);
 
             String encodedJson = Base64.getEncoder().encodeToString(GSON.toJson(item).getBytes(StandardCharsets.UTF_8));
+            byte[] stdinData = encodedJson.getBytes(StandardCharsets.UTF_8);
             BwResult res;
             if (existingId != null && !existingId.isBlank()) {
-                res = executeBwCommand("edit", "item", existingId, encodedJson);
+                res = executeBwCommandWithStdin(stdinData, "edit", "item", existingId);
             } else {
-                res = executeBwCommand("create", "item", encodedJson);
+                res = executeBwCommandWithStdin(stdinData, "create", "item");
             }
 
             if (res != null && res.exitCode() == 0) {
@@ -947,10 +1059,18 @@ public class BitwardenManager {
     }
 
     private static BwResult executeBwCommand(String... args) {
-        return executeBwCommandWithEnv(null, args);
+        return executeBwCommandWithEnvAndStdin(null, null, args);
     }
 
     private static BwResult executeBwCommandWithEnv(Map<String, String> extraEnv, String... args) {
+        return executeBwCommandWithEnvAndStdin(null, extraEnv, args);
+    }
+
+    private static BwResult executeBwCommandWithStdin(byte[] stdinData, String... args) {
+        return executeBwCommandWithEnvAndStdin(stdinData, null, args);
+    }
+
+    private static BwResult executeBwCommandWithEnvAndStdin(byte[] stdinData, Map<String, String> extraEnv, String... args) {
         try {
             String executable = getCliExecutable();
             if (isLocalCliInstalled() && !IS_WINDOWS) {
@@ -989,9 +1109,16 @@ public class BitwardenManager {
 
             Process process = pb.start();
 
-            try {
-                process.getOutputStream().close();
-            } catch (Exception ignored) {}
+            if (stdinData != null && stdinData.length > 0) {
+                try (OutputStream os = process.getOutputStream()) {
+                    os.write(stdinData);
+                    os.flush();
+                } catch (Exception ignored) {}
+            } else {
+                try {
+                    process.getOutputStream().close();
+                } catch (Exception ignored) {}
+            }
 
             StringBuilder output = new StringBuilder();
             Thread readerThread = new Thread(() -> {
@@ -1001,7 +1128,7 @@ public class BitwardenManager {
                         output.append(line).append("\n");
                     }
                 } catch (Exception ignored) {}
-            });
+            }, "SYPass-Process-Reader");
             readerThread.setDaemon(true);
             readerThread.start();
 

@@ -88,6 +88,13 @@ public class SYPassScreen extends BaseOwoScreen<FlowLayout> {
     private String pendingDeleteKey = null;
     private String pendingBwDeleteKey = null;
     private String selected2faMethod = "0";
+    private LabelComponent persistentStatusLabel = null;
+
+    private static final java.util.regex.Pattern STATUS_PREFIX_PATTERN = java.util.regex.Pattern.compile("^[§a-f0-9⏳⟳ ]+");
+    private static final java.util.regex.Pattern STATUS_SUFFIX_DOTS_PATTERN = java.util.regex.Pattern.compile("\\.+$");
+    private int lastDotCount = -1;
+    private String cachedBaseStatus = "";
+    private String lastRawStatusMessage = null;
 
     public SYPassScreen() {
         this(null);
@@ -99,7 +106,10 @@ public class SYPassScreen extends BaseOwoScreen<FlowLayout> {
     }
 
     public void setStatusMessage(String message) {
-        this.statusMessage = message;
+        this.statusMessage = message != null ? message : "";
+        if (this.persistentStatusLabel != null) {
+            this.persistentStatusLabel.text(Text.literal(this.statusMessage));
+        }
     }
 
     public void refreshPasswordList() {
@@ -214,9 +224,8 @@ public class SYPassScreen extends BaseOwoScreen<FlowLayout> {
         bottomPanel.gap(4);
         bottomPanel.horizontalAlignment(HorizontalAlignment.CENTER);
 
-        if (!statusMessage.isEmpty()) {
-            bottomPanel.child(Components.label(Text.literal(statusMessage)).shadow(true));
-        }
+        this.persistentStatusLabel = Components.label(Text.literal(statusMessage != null ? statusMessage : "")).shadow(true);
+        bottomPanel.child(this.persistentStatusLabel);
 
         FlowLayout bottomButtons = Containers.horizontalFlow(Sizing.content(), Sizing.fixed(20));
         bottomButtons.gap(6);
@@ -326,8 +335,7 @@ public class SYPassScreen extends BaseOwoScreen<FlowLayout> {
         ButtonComponent copyBtn = Components.button(Text.literal("📋"), b -> {
             if (this.client != null && this.client.keyboard != null) {
                 this.client.keyboard.setClipboard(data.password());
-                this.statusMessage = Text.translatable("sypass.gui.status.copied", username).getString();
-                rebuildUI();
+                setStatusMessage(Text.translatable("sypass.gui.status.copied", username).getString());
             }
         });
         copyBtn.horizontalSizing(Sizing.fixed(20));
@@ -956,7 +964,7 @@ public class SYPassScreen extends BaseOwoScreen<FlowLayout> {
     }
 
     private void updateBitwardenStatusAsync() {
-        new Thread(() -> {
+        BitwardenManager.getExecutor().execute(() -> {
             BitwardenManager.BwStatusInfo info = BitwardenManager.getStatusInfo();
             if (this.client != null) {
                 this.client.execute(() -> {
@@ -975,7 +983,7 @@ public class SYPassScreen extends BaseOwoScreen<FlowLayout> {
                     rebuildUI();
                 });
             }
-        }).start();
+        });
     }
 
     private void handleSendEmail2fa() {
@@ -984,7 +992,7 @@ public class SYPassScreen extends BaseOwoScreen<FlowLayout> {
         this.statusMessage = Text.translatable("sypass.gui.status.syncing").getString();
         rebuildUI();
 
-        new Thread(() -> {
+        BitwardenManager.getExecutor().execute(() -> {
             BitwardenManager.sendEmail2faCode(savedEmail, savedPassword);
             if (this.client != null) {
                 this.client.execute(() -> {
@@ -993,7 +1001,7 @@ public class SYPassScreen extends BaseOwoScreen<FlowLayout> {
                     rebuildUI();
                 });
             }
-        }).start();
+        });
     }
 
     private void handleDeleteFromBitwarden(String serverIp, String username, PasswordManager.AccountData data) {
@@ -1028,7 +1036,7 @@ public class SYPassScreen extends BaseOwoScreen<FlowLayout> {
         this.statusMessage = Text.translatable("sypass.gui.status.syncing").getString();
         rebuildUI();
 
-        new Thread(() -> {
+        BitwardenManager.getExecutor().execute(() -> {
             BitwardenManager.BwLoginResponse response = BitwardenManager.login(savedEmail, savedPassword, otp, method);
             if (this.client != null) {
                 this.client.execute(() -> {
@@ -1062,7 +1070,7 @@ public class SYPassScreen extends BaseOwoScreen<FlowLayout> {
                     rebuildUI();
                 });
             }
-        }).start();
+        });
     }
 
     private void handleApiKeyLogin(String clientId, String clientSecret, String masterPass) {
@@ -1076,7 +1084,7 @@ public class SYPassScreen extends BaseOwoScreen<FlowLayout> {
         this.statusMessage = Text.translatable("sypass.gui.status.syncing").getString();
         rebuildUI();
 
-        new Thread(() -> {
+        BitwardenManager.getExecutor().execute(() -> {
             BitwardenManager.BwLoginResponse response = BitwardenManager.loginWithApiKey(clientId, clientSecret, masterPass);
             if (this.client != null) {
                 this.client.execute(() -> {
@@ -1091,7 +1099,7 @@ public class SYPassScreen extends BaseOwoScreen<FlowLayout> {
                     rebuildUI();
                 });
             }
-        }).start();
+        });
     }
 
     private void handlePull() {
@@ -1099,7 +1107,7 @@ public class SYPassScreen extends BaseOwoScreen<FlowLayout> {
         this.statusMessage = Text.translatable("sypass.gui.status.syncing").getString();
         rebuildUI();
 
-        new Thread(() -> {
+        BitwardenManager.getExecutor().execute(() -> {
             BitwardenManager.BwSyncResult result = BitwardenManager.pullFromBitwarden();
             if (this.client != null) {
                 this.client.execute(() -> {
@@ -1112,7 +1120,7 @@ public class SYPassScreen extends BaseOwoScreen<FlowLayout> {
                     rebuildUI();
                 });
             }
-        }).start();
+        });
     }
 
     private void handlePush() {
@@ -1120,7 +1128,7 @@ public class SYPassScreen extends BaseOwoScreen<FlowLayout> {
         this.statusMessage = Text.translatable("sypass.gui.status.syncing").getString();
         rebuildUI();
 
-        new Thread(() -> {
+        BitwardenManager.getExecutor().execute(() -> {
             BitwardenManager.BwSyncResult result = BitwardenManager.pushToBitwarden();
             if (this.client != null) {
                 this.client.execute(() -> {
@@ -1132,7 +1140,7 @@ public class SYPassScreen extends BaseOwoScreen<FlowLayout> {
                     rebuildUI();
                 });
             }
-        }).start();
+        });
     }
 
     private void handleFullSync() {
@@ -1149,7 +1157,7 @@ public class SYPassScreen extends BaseOwoScreen<FlowLayout> {
         this.statusMessage = Text.translatable("sypass.gui.status.syncing").getString();
         rebuildUI();
 
-        new Thread(() -> {
+        BitwardenManager.getExecutor().execute(() -> {
             BitwardenManager.BwSyncResult pullRes = BitwardenManager.pullFromBitwarden();
             if (!pullRes.success()) {
                 if (this.client != null) {
@@ -1187,7 +1195,7 @@ public class SYPassScreen extends BaseOwoScreen<FlowLayout> {
                     rebuildUI();
                 });
             }
-        }).start();
+        });
     }
 
     private void buildSettingsTab(FlowLayout root) {
@@ -1535,30 +1543,42 @@ public class SYPassScreen extends BaseOwoScreen<FlowLayout> {
         super.tick();
         long now = System.currentTimeMillis();
         int dotCount = (int) ((now / 350) % 4);
-        String dots = ".".repeat(dotCount);
 
-        if (bwStage == BwStage.CHECKING_STATUS && checkingStatusLabel != null) {
-            checkingStatusLabel.text(Text.literal("§b⟳ " + Text.translatable("sypass.gui.bw.checking_status").getString() + dots));
-            if (checkingProgressBar != null) {
-                int progress = (int) (15 + 85 * Math.abs(Math.sin((now % 1600) / 1600.0 * Math.PI)));
-                checkingProgressBar.horizontalSizing(Sizing.fill(Math.max(5, Math.min(100, progress))));
+        if (dotCount != lastDotCount) {
+            lastDotCount = dotCount;
+            String dots = ".".repeat(dotCount);
+
+            if (bwStage == BwStage.CHECKING_STATUS && checkingStatusLabel != null) {
+                checkingStatusLabel.text(Text.literal("§b⟳ " + Text.translatable("sypass.gui.bw.checking_status").getString() + dots));
+            }
+
+            if (isProcessing && processingStatusLabel != null) {
+                if (!java.util.Objects.equals(lastRawStatusMessage, statusMessage)) {
+                    lastRawStatusMessage = statusMessage;
+                    String raw = (statusMessage != null && !statusMessage.isBlank())
+                            ? statusMessage
+                            : Text.translatable("sypass.gui.status.syncing").getString();
+                    cachedBaseStatus = STATUS_SUFFIX_DOTS_PATTERN.matcher(STATUS_PREFIX_PATTERN.matcher(raw).replaceAll("")).replaceAll("").trim();
+                }
+                processingStatusLabel.text(Text.literal("§b⏳ " + cachedBaseStatus + dots));
             }
         }
 
-        if (isProcessing && processingStatusLabel != null) {
-            String base = (statusMessage != null && !statusMessage.isBlank())
-                    ? statusMessage.replaceAll("^[§a-f0-9⏳⟳ ]+", "").replaceAll("\\.+$", "").trim()
-                    : Text.translatable("sypass.gui.status.syncing").getString().replaceAll("\\.+$", "").trim();
-            processingStatusLabel.text(Text.literal("§b⏳ " + base + dots));
-            if (processingProgressBar != null) {
-                int progress = (int) (20 + 80 * Math.abs(Math.sin(((now + 400) % 1500) / 1500.0 * Math.PI)));
-                processingProgressBar.horizontalSizing(Sizing.fill(Math.max(5, Math.min(100, progress))));
-            }
+        if (bwStage == BwStage.CHECKING_STATUS && checkingProgressBar != null) {
+            int progress = (int) (15 + 85 * Math.abs(Math.sin((now % 1600) / 1600.0 * Math.PI)));
+            checkingProgressBar.horizontalSizing(Sizing.fill(Math.max(5, Math.min(100, progress))));
+        }
+
+        if (isProcessing && processingProgressBar != null) {
+            int progress = (int) (20 + 80 * Math.abs(Math.sin(((now + 400) % 1500) / 1500.0 * Math.PI)));
+            processingProgressBar.horizontalSizing(Sizing.fill(Math.max(5, Math.min(100, progress))));
         }
     }
 
     @Override
     public void close() {
+        this.savedPassword = "";
+        this.savedEmail = "";
         if (this.client != null) {
             this.client.setScreen(this.parent);
         }

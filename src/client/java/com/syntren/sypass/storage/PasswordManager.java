@@ -20,10 +20,14 @@ import java.io.FileWriter;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
+import java.nio.file.attribute.PosixFilePermission;
+import java.nio.file.attribute.PosixFilePermissions;
 import java.util.Base64;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 public class PasswordManager {
@@ -69,24 +73,62 @@ public class PasswordManager {
         }
     }
 
-    private static void loadOrCreateKey() throws Exception {
-        if (Files.exists(KEY_FILE)) {
-            byte[] keyBytes = Files.readAllBytes(KEY_FILE);
-            secretKey = new SecretKeySpec(keyBytes, "AES");
-            return;
-        }
+    private static boolean legacyFormatDetected = false;
 
-        if (Files.exists(OLD_KEY_FILE)) {
-            byte[] keyBytes = Files.readAllBytes(OLD_KEY_FILE);
-            secretKey = new SecretKeySpec(keyBytes, "AES");
-            Files.write(KEY_FILE, keyBytes);
-            return;
+    public static void enforceSecurePermissions(Path path) {
+        if (path == null || !Files.exists(path)) return;
+        try {
+            Set<PosixFilePermission> permissions = PosixFilePermissions.fromString("rw-------");
+            Files.setPosixFilePermissions(path, permissions);
+        } catch (UnsupportedOperationException ignored) {
+            File file = path.toFile();
+            file.setReadable(false, false);
+            file.setReadable(true, true);
+            file.setWritable(false, false);
+            file.setWritable(true, true);
+        } catch (Exception e) {
+            System.err.println("[SYPass] Failed to enforce strict file permissions: " + e.getMessage());
+        }
+    }
+
+    public static void writeSecureFile(Path path, byte[] data) throws Exception {
+        if (path.getParent() != null && !Files.exists(path.getParent())) {
+            Files.createDirectories(path.getParent());
+        }
+        Path tempFile = path.resolveSibling(path.getFileName() + ".tmp");
+        Files.write(tempFile, data);
+        enforceSecurePermissions(tempFile);
+        try {
+            Files.move(tempFile, path, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+        } catch (Exception e) {
+            Files.move(tempFile, path, StandardCopyOption.REPLACE_EXISTING);
+        }
+        enforceSecurePermissions(path);
+    }
+
+    private static void loadOrCreateKey() throws Exception {
+        Path targetKeyFile = Files.exists(KEY_FILE) ? KEY_FILE : (Files.exists(OLD_KEY_FILE) ? OLD_KEY_FILE : null);
+
+        if (targetKeyFile != null) {
+            byte[] keyBytes = Files.readAllBytes(targetKeyFile);
+            if (keyBytes.length == 32 || keyBytes.length == 16) {
+                secretKey = new SecretKeySpec(keyBytes, "AES");
+                if (targetKeyFile.equals(OLD_KEY_FILE) && !Files.exists(KEY_FILE)) {
+                    writeSecureFile(KEY_FILE, keyBytes);
+                } else {
+                    enforceSecurePermissions(KEY_FILE);
+                }
+                return;
+            } else {
+                System.err.println("[SYPass] Corrupted or invalid key size (" + keyBytes.length + " bytes). Backing up corrupted key.");
+                Files.move(targetKeyFile, targetKeyFile.resolveSibling(targetKeyFile.getFileName() + ".corrupted"), StandardCopyOption.REPLACE_EXISTING);
+            }
         }
 
         KeyGenerator keyGen = KeyGenerator.getInstance("AES");
         keyGen.init(256);
         secretKey = keyGen.generateKey();
-        Files.write(KEY_FILE, secretKey.getEncoded());
+        writeSecureFile(KEY_FILE, secretKey.getEncoded());
     }
 
     public static String normalizeServerAddress(String address) {
@@ -258,17 +300,16 @@ public class PasswordManager {
             if (!Files.exists(CONFIG_DIR)) {
                 Files.createDirectories(CONFIG_DIR);
             }
-            try (FileWriter writer = new FileWriter(CONFIG_FILE.toFile())) {
-                String rawJson = GSON.toJson(memoryData);
-                String encryptedJson = encrypt(rawJson);
+            String rawJson = GSON.toJson(memoryData);
+            String encryptedJson = encrypt(rawJson);
 
-                Map<String, String> wrapper = new HashMap<>();
-                wrapper.put("vault", encryptedJson);
-                if (savedBwSessionKey != null && !savedBwSessionKey.isBlank()) {
-                    wrapper.put("bw_session", encrypt(savedBwSessionKey));
-                }
-                GSON.toJson(wrapper, writer);
+            Map<String, String> wrapper = new HashMap<>();
+            wrapper.put("vault", encryptedJson);
+            if (savedBwSessionKey != null && !savedBwSessionKey.isBlank()) {
+                wrapper.put("bw_session", encrypt(savedBwSessionKey));
             }
+            String jsonOutput = GSON.toJson(wrapper);
+            writeSecureFile(CONFIG_FILE, jsonOutput.getBytes(StandardCharsets.UTF_8));
         } catch (Exception e) {
             e.printStackTrace();
         }
@@ -281,6 +322,7 @@ public class PasswordManager {
             if (!file.exists()) return;
         }
 
+        legacyFormatDetected = false;
         try (FileReader reader = new FileReader(file)) {
             Map<String, String> wrapper = GSON.fromJson(reader, new TypeToken<Map<String, String>>(){}.getType());
             if (wrapper != null) {
@@ -307,6 +349,14 @@ public class PasswordManager {
                             BitwardenManager.setSessionKey(savedBwSessionKey, false);
                         }
                     } catch (Exception ignored) {}
+                }
+
+                // Automatic seamless migration to AES-GCM and updated location
+                if (legacyFormatDetected || file.equals(OLD_CONFIG_FILE.toFile())) {
+                    System.out.println("[SYPass] Migrating legacy ECB vault to secure AES-GCM format...");
+                    saveToFile();
+                } else {
+                    enforceSecurePermissions(file.toPath());
                 }
             }
         } catch (Exception e) {
@@ -358,11 +408,12 @@ public class PasswordManager {
             return new String(decryptedBytes, StandardCharsets.UTF_8);
         }
 
-        // Fallback for legacy encrypted files (ECB mode)
+        // Fallback for legacy encrypted files (ECB mode) with automatic migration detection
         try {
             Cipher cipher = Cipher.getInstance("AES");
             cipher.init(Cipher.DECRYPT_MODE, secretKey);
             byte[] decryptedBytes = cipher.doFinal(Base64.getDecoder().decode(encryptedData));
+            legacyFormatDetected = true;
             return new String(decryptedBytes, StandardCharsets.UTF_8);
         } catch (Exception e) {
             throw new IllegalStateException("Failed to decrypt data", e);
@@ -433,9 +484,7 @@ public class PasswordManager {
                 wrapper.add("servers", servers);
             }
 
-            try (FileWriter writer = new FileWriter(backupFile.toFile())) {
-                GSON.toJson(wrapper, writer);
-            }
+            writeSecureFile(backupFile, GSON.toJson(wrapper).getBytes(StandardCharsets.UTF_8));
             return backupFile.getFileName().toString();
         } catch (Exception e) {
             e.printStackTrace();

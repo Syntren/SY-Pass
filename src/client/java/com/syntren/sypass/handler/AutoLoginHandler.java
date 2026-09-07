@@ -32,8 +32,12 @@ public class AutoLoginHandler {
     private static boolean hasPromptedRegisterToast = false;
 
     // Regex patterns for matching server prompts
+    private static final Pattern STRIP_COLOR_PATTERN = Pattern.compile("(?i)§[0-9a-fk-or]");
+
     private static final Pattern LOGIN_PROMPT_PATTERN = Pattern.compile(
-            "(?i)(?:/(?:login|l)\\b)|(?:(?:авториз|увійдіть|войдите|пароль|password|введіть|введите|login|log\\s*in)\\b.*(?:/(?:login|l)\\b))"
+            "(?i)(?:(?:введіть|введите|enter|type|use|please|пароль|password|авториз|увійдіть|войдите|login|log\\s*in)\\b.*(?:/(?:login|l)\\b))|" +
+            "(?:/(?:login|l)\\s+<(?:пароль|password)>)|" +
+            "(?:(?:авториз|увійдіть|войдите|authenticate).*:(?:\\s*/(?:login|l)\\b)?)"
     );
 
     private static final Pattern REGISTER_PROMPT_PATTERN = Pattern.compile(
@@ -132,13 +136,13 @@ public class AutoLoginHandler {
 
         String currentServerIp = server.address;
         String username = client.getSession().getUsername();
-        String cleanText = rawText.replaceAll("§[0-9a-fk-orA-FK-OR]", "").trim();
+        String cleanText = STRIP_COLOR_PATTERN.matcher(rawText).replaceAll("").trim();
         long now = System.currentTimeMillis();
 
         boolean hasSavedAccount = PasswordManager.hasPassword(currentServerIp, username);
 
-        // Case 1: Account exists -> Smart Auto-Login
-        if (hasSavedAccount && SYPassConfig.isAutoLoginEnabled() && SYPassConfig.isSmartAutoLoginEnabled()) {
+        // Case 1: Account exists -> Smart Auto-Login (only if not already logged in this session)
+        if (hasSavedAccount && SYPassConfig.isAutoLoginEnabled() && SYPassConfig.isSmartAutoLoginEnabled() && !hasLoggedInThisSession) {
             if (LOGIN_PROMPT_PATTERN.matcher(cleanText).find()) {
                 if (now - lastLoginAttemptMs > 4000 && loginAttemptsThisSession < 3) {
                     lastLoginAttemptMs = now;
@@ -183,12 +187,18 @@ public class AutoLoginHandler {
     private static void sendLoginCommand(MinecraftClient client, PasswordManager.AccountData entry, boolean isSmart) {
         if (client == null || client.player == null || entry == null) return;
 
-        String cmd = entry.command().trim();
+        String cmd = entry.command().trim().replaceAll("[\\r\\n]", "");
         if (cmd.startsWith("/")) {
             cmd = cmd.substring(1);
         }
+        if (cmd.isBlank()) {
+            cmd = "login";
+        }
 
-        String fullCommand = cmd + " " + entry.password();
+        String pass = entry.password().trim().replaceAll("[\\r\\n]", "");
+        if (pass.isEmpty()) return;
+
+        String fullCommand = cmd + " " + pass;
         client.player.networkHandler.sendChatCommand(fullCommand);
 
         String username = client.getSession().getUsername();
@@ -224,12 +234,18 @@ public class AutoLoginHandler {
         String username = client.getSession().getUsername();
         PasswordManager.AccountData entry = PasswordManager.getPassword(server.address, username);
         if (entry != null) {
-            String cmd = entry.command().trim();
+            String cmd = entry.command().trim().replaceAll("[\\r\\n]", "");
             if (cmd.startsWith("/")) {
                 cmd = cmd.substring(1);
             }
+            if (cmd.isBlank()) {
+                cmd = "login";
+            }
 
-            String fullCommand = cmd + " " + entry.password();
+            String pass = entry.password().trim().replaceAll("[\\r\\n]", "");
+            if (pass.isEmpty()) return;
+
+            String fullCommand = cmd + " " + pass;
             client.player.networkHandler.sendChatCommand(fullCommand);
 
             SYPassToast.show(

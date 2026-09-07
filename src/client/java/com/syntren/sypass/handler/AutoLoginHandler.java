@@ -69,7 +69,13 @@ public class AutoLoginHandler {
             PasswordManager.AccountData entry = PasswordManager.getPassword(currentServerIp, username);
             if (entry != null) {
                 pendingEntry = entry;
-                ticksToWait = SYPassConfig.getAutoLoginDelayTicks();
+                if (SYPassConfig.isSmartAutoLoginEnabled()) {
+                    // Smart Auto-Login is enabled: wait for server prompt, with a 5s safety fallback
+                    ticksToWait = Math.max(100, SYPassConfig.getAutoLoginDelayTicks() * 3);
+                } else {
+                    // Classic timer-based Auto-Login: send after configured delay
+                    ticksToWait = SYPassConfig.getAutoLoginDelayTicks();
+                }
             }
         });
 
@@ -195,6 +201,7 @@ public class AutoLoginHandler {
                 new ItemStack(Items.TRIPWIRE_HOOK)
         );
 
+        lastLoginAttemptMs = System.currentTimeMillis();
         hasLoggedInThisSession = true;
     }
 

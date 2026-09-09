@@ -503,7 +503,9 @@ public class SYPassScreen extends BaseOwoScreen<FlowLayout> {
                 desc1.maxWidth(cardWidth - 20);
                 mainCard.child(desc1);
 
-                LabelComponent desc2 = Components.label(Text.translatable("sypass.gui.bw.not_found.desc2").formatted(Formatting.DARK_GRAY));
+                String desc2Key = BitwardenManager.IS_WINDOWS ? "sypass.gui.bw.not_found.desc2.windows" :
+                        (BitwardenManager.IS_MAC ? "sypass.gui.bw.not_found.desc2.mac" : "sypass.gui.bw.not_found.desc2.linux");
+                LabelComponent desc2 = Components.label(Text.translatable(desc2Key).formatted(Formatting.DARK_GRAY));
                 desc2.maxWidth(cardWidth - 20);
                 mainCard.child(desc2);
 
@@ -762,7 +764,16 @@ public class SYPassScreen extends BaseOwoScreen<FlowLayout> {
 
                 mainCard.child(Components.label(Text.translatable("sypass.gui.bw.session.title")).shadow(true).margins(Insets.vertical(2)));
 
-                LabelComponent desc1 = Components.label(Text.translatable("sypass.gui.bw.session.desc1").formatted(Formatting.GRAY));
+                String altHint = Text.translatable("sypass.gui.bw.session.or").getString();
+                String unlockCmd = BitwardenManager.IS_WINDOWS
+                        ? (BitwardenManager.isLocalCliInstalled() ? ".\\bw.exe unlock" : "bw unlock " + altHint + " .\\bw.exe unlock")
+                        : (BitwardenManager.isLocalCliInstalled() ? "./bw unlock" : "bw unlock " + altHint + " ./bw unlock");
+
+                String loginCmd = BitwardenManager.IS_WINDOWS
+                        ? (BitwardenManager.isLocalCliInstalled() ? ".\\bw.exe login" : "bw login")
+                        : (BitwardenManager.isLocalCliInstalled() ? "./bw login" : "bw login");
+
+                LabelComponent desc1 = Components.label(Text.translatable("sypass.gui.bw.session.desc1", unlockCmd).formatted(Formatting.GRAY));
                 desc1.maxWidth(cardWidth - 20);
                 mainCard.child(desc1);
 
@@ -782,7 +793,7 @@ public class SYPassScreen extends BaseOwoScreen<FlowLayout> {
                 unlockBtn.margins(Insets.top(2));
                 mainCard.child(unlockBtn);
 
-                LabelComponent note = Components.label(Text.translatable("sypass.gui.bw.session.terminal_hint").formatted(Formatting.DARK_GRAY));
+                LabelComponent note = Components.label(Text.translatable("sypass.gui.bw.session.terminal_hint", loginCmd, unlockCmd).formatted(Formatting.DARK_GRAY));
                 note.maxWidth(cardWidth - 20);
                 note.margins(Insets.top(2));
                 mainCard.child(note);

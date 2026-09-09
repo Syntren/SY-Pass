@@ -3,7 +3,7 @@
 	"id": "sypass",
 	"version": "${version}",
 	"name": "SY-Pass",
-	"description": "In-game password manager with auto-login and Bitwarden sync.",
+	"description": "In-game password manager with auto-login and optional Bitwarden sync.",
 	"authors": [
 		"Syntren"
 	],

@@ -20,6 +20,7 @@ public class ServerIconManager {
 
     private static final Map<String, WorldIcon> ICON_CACHE = new ConcurrentHashMap<>();
     private static final Set<String> NO_ICON_SET = ConcurrentHashMap.newKeySet();
+    private static final Map<String, byte[]> FAVICON_INDEX = new ConcurrentHashMap<>();
     private static ServerList serverList = null;
     private static long lastServerListLoadTime = 0L;
 
@@ -32,7 +33,20 @@ public class ServerIconManager {
         try {
             serverList.loadFile();
             lastServerListLoadTime = System.currentTimeMillis();
+            FAVICON_INDEX.clear();
             NO_ICON_SET.clear();
+            int count = serverList.size();
+            for (int i = 0; i < count; i++) {
+                ServerInfo info = serverList.get(i);
+                if (info != null && info.address != null) {
+                    byte[] fav = info.getFavicon();
+                    if (fav != null && fav.length > 0) {
+                        String norm = PasswordManager.normalizeServerAddress(info.address);
+                        FAVICON_INDEX.put(norm, fav);
+                        FAVICON_INDEX.put(info.address.toLowerCase(java.util.Locale.ROOT), fav);
+                    }
+                }
+            }
         } catch (Exception ignored) {}
     }
 
@@ -72,29 +86,19 @@ public class ServerIconManager {
             }
         } catch (Exception ignored) {}
 
-        // 2. Check saved multiplayer server list
+        // 2. Check cached multiplayer server list index
         if (serverList == null || (System.currentTimeMillis() - lastServerListLoadTime > 15000)) {
             reloadServerList();
         }
 
-        if (serverList != null) {
-            try {
-                int count = serverList.size();
-                for (int i = 0; i < count; i++) {
-                    ServerInfo info = serverList.get(i);
-                    if (info != null && info.address != null) {
-                        String infoNorm = PasswordManager.normalizeServerAddress(info.address);
-                        if (infoNorm.equalsIgnoreCase(norm) || info.address.equalsIgnoreCase(serverAddress)) {
-                            byte[] fav = info.getFavicon();
-                            if (fav != null && fav.length > 0) {
-                                Identifier id = registerIcon(client, norm, fav);
-                                if (id != null) return id;
-                            }
-                            break;
-                        }
-                    }
-                }
-            } catch (Exception ignored) {}
+        byte[] fav = FAVICON_INDEX.get(norm);
+        if (fav == null) {
+            fav = FAVICON_INDEX.get(serverAddress.toLowerCase(java.util.Locale.ROOT));
+        }
+
+        if (fav != null && fav.length > 0) {
+            Identifier id = registerIcon(client, norm, fav);
+            if (id != null) return id;
         }
 
         NO_ICON_SET.add(norm);

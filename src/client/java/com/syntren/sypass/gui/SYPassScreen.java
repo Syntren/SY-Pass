@@ -389,8 +389,16 @@ public class SYPassScreen extends BaseOwoScreen<FlowLayout> {
             return;
         }
 
-        boolean hasFavorites = entries.stream().anyMatch(e -> e.data().isFavorite());
-        boolean hasNonFavorites = entries.stream().anyMatch(e -> !e.data().isFavorite());
+        boolean hasFavorites = false;
+        boolean hasNonFavorites = false;
+        for (EntryItem entry : entries) {
+            if (entry.data().isFavorite()) {
+                hasFavorites = true;
+            } else {
+                hasNonFavorites = true;
+            }
+            if (hasFavorites && hasNonFavorites) break;
+        }
 
         if (this.sortMode == SortMode.FAVORITES_FIRST && !this.onlyFavorites && hasFavorites && hasNonFavorites) {
             boolean favHeaderAdded = false;
@@ -1805,6 +1813,7 @@ public class SYPassScreen extends BaseOwoScreen<FlowLayout> {
     public void close() {
         this.savedPassword = "";
         this.savedEmail = "";
+        this.revealedPasswords.clear();
         if (this.client != null) {
             this.client.setScreen(this.parent);
         }

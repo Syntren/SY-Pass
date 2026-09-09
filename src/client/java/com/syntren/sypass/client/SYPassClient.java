@@ -2,10 +2,12 @@ package com.syntren.sypass.client;
 
 import com.syntren.sypass.command.SYPassCommands;
 import com.syntren.sypass.config.SYPassConfig;
+import com.syntren.sypass.gui.ServerIconManager;
 import com.syntren.sypass.gui.SYPassScreen;
 import com.syntren.sypass.handler.AutoLoginHandler;
 import com.syntren.sypass.storage.PasswordManager;
 import net.fabricmc.api.ClientModInitializer;
+import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientLifecycleEvents;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
 import net.minecraft.client.option.KeyBinding;
@@ -23,6 +25,7 @@ public class SYPassClient implements ClientModInitializer {
 		PasswordManager.init();
 		SYPassCommands.register();
 		AutoLoginHandler.register();
+		ClientLifecycleEvents.CLIENT_STOPPING.register(client -> ServerIconManager.clearCache());
 
 		openGuiKeyBinding = KeyBindingHelper.registerKeyBinding(new KeyBinding(
 				"key.sypass.open_gui",

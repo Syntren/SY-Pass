@@ -751,7 +751,8 @@ public class PasswordManager {
 
                 String cmd = "/login";
                 if (notes.startsWith("/")) {
-                    cmd = notes.split("\\s+")[0];
+                    int firstSpace = notes.indexOf(' ');
+                    cmd = firstSpace > 0 ? notes.substring(0, firstSpace) : notes;
                 }
 
                 savePassword(server, username, password, cmd, false, "", favorite, 0L);

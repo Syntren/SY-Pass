@@ -105,7 +105,7 @@
   "sypass.gui.bw.login.2fa_tooltip": "Select your account's 2FA method",
   "sypass.gui.bw.login.button_login": "Login",
   "sypass.gui.bw.login.register": "🔗 Register for Bitwarden",
-  "sypass.gui.bw.login.register.tooltip": "Copy registration link to create a Bitwarden account",
+  "sypass.gui.bw.login.register.tooltip": "Open official Bitwarden registration page in browser",
   "sypass.gui.bw.login.register_copied": "Registration link copied to clipboard!",
   "sypass.gui.bw.otp.title": "Two-Factor Authentication (2FA)",
   "sypass.gui.bw.otp.method_authenticator": "📱 Authenticator",

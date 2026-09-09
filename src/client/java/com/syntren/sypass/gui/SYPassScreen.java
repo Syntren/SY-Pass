@@ -13,6 +13,7 @@ import io.wispforest.owo.ui.container.ScrollContainer;
 import io.wispforest.owo.ui.core.*;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
+import net.minecraft.client.gui.screen.ConfirmLinkScreen;
 import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.text.OrderedText;
 import net.minecraft.text.Style;
@@ -510,7 +511,7 @@ public class SYPassScreen extends BaseOwoScreen<FlowLayout> {
                 mainCard.child(desc2);
 
                 ButtonComponent guideBtn = Components.button(Text.translatable("sypass.gui.bw.button.guide"), b -> {
-                    Util.getOperatingSystem().open(URI.create("https://bitwarden.com/help/cli/"));
+                    ConfirmLinkScreen.open(this, "https://bitwarden.com/help/cli/", true);
                 });
                 guideBtn.horizontalSizing(Sizing.fill(100));
                 guideBtn.margins(Insets.top(4));
@@ -595,12 +596,7 @@ public class SYPassScreen extends BaseOwoScreen<FlowLayout> {
                 mainCard.child(loginBtn);
 
                 ButtonComponent registerBtn = Components.button(Text.translatable("sypass.gui.bw.login.register"), b -> {
-                    if (this.client != null && this.client.keyboard != null) {
-                        String regUrl = "https://vault.bitwarden.com/#/register";
-                        this.client.keyboard.setClipboard(regUrl);
-                        this.statusMessage = "§a" + Text.translatable("sypass.gui.bw.login.register_copied").getString();
-                        rebuildUI();
-                    }
+                    ConfirmLinkScreen.open(this, "https://vault.bitwarden.com/#/register", true);
                 });
                 registerBtn.horizontalSizing(Sizing.fill(100));
                 registerBtn.margins(Insets.top(2));

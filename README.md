@@ -48,7 +48,7 @@ To compile the mod, run:
 
 The compiled mod JAR will be placed in:
 ```
-build/libs/sypass-fabric-1.3.0-mc1.21-1.21.1.jar
+build/libs/sypass-fabric-1.4.0-mc1.21-1.21.1.jar
 ```
 
 ---

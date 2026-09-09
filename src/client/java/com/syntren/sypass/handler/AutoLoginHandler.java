@@ -211,6 +211,10 @@ public class AutoLoginHandler {
                 new ItemStack(Items.TRIPWIRE_HOOK)
         );
 
+        ServerInfo currentServer = client.getCurrentServerEntry();
+        if (currentServer != null && currentServer.address != null) {
+            PasswordManager.updateLastUsed(currentServer.address, username);
+        }
         lastLoginAttemptMs = System.currentTimeMillis();
         hasLoggedInThisSession = true;
     }
@@ -253,6 +257,7 @@ public class AutoLoginHandler {
                     Text.translatable("sypass.toast.quicklogin.desc", username),
                     new ItemStack(Items.TRIPWIRE_HOOK)
             );
+            PasswordManager.updateLastUsed(server.address, username);
             hasLoggedInThisSession = true;
         } else {
             SYPassToast.show(

@@ -22,9 +22,11 @@ import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.attribute.PosixFilePermission;
 import java.nio.file.attribute.PosixFilePermissions;
+import java.util.ArrayList;
 import java.util.Base64;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -42,9 +44,13 @@ public class PasswordManager {
     private static String savedBwSessionKey = "";
     private static SecretKey secretKey;
 
-    public record AccountData(String password, String command, boolean isSynced, String remoteId) {
+    public record AccountData(String password, String command, boolean isSynced, String remoteId, boolean isFavorite, long lastUsed) {
         public AccountData(String password, String command) {
-            this(password, command, false, "");
+            this(password, command, false, "", false, 0L);
+        }
+
+        public AccountData(String password, String command, boolean isSynced, String remoteId) {
+            this(password, command, isSynced, remoteId, false, 0L);
         }
 
         public AccountData {
@@ -146,10 +152,19 @@ public class PasswordManager {
         AccountData existing = getPassword(serverIp, username);
         boolean synced = (existing != null && existing.isSynced());
         String remoteId = (existing != null && existing.remoteId() != null) ? existing.remoteId() : "";
-        savePassword(serverIp, username, password, command, synced, remoteId);
+        boolean favorite = (existing != null && existing.isFavorite());
+        long lastUsed = (existing != null) ? existing.lastUsed() : 0L;
+        savePassword(serverIp, username, password, command, synced, remoteId, favorite, lastUsed);
     }
 
     public static synchronized void savePassword(String serverIp, String username, String password, String command, boolean isSynced, String remoteId) {
+        AccountData existing = getPassword(serverIp, username);
+        boolean favorite = (existing != null && existing.isFavorite());
+        long lastUsed = (existing != null) ? existing.lastUsed() : 0L;
+        savePassword(serverIp, username, password, command, isSynced, remoteId, favorite, lastUsed);
+    }
+
+    public static synchronized void savePassword(String serverIp, String username, String password, String command, boolean isSynced, String remoteId, boolean isFavorite, long lastUsed) {
         if (serverIp == null || serverIp.isBlank() || username == null || username.isBlank() || password == null) {
             return;
         }
@@ -163,8 +178,29 @@ public class PasswordManager {
         }
 
         memoryData.computeIfAbsent(cleanServer, k -> new ConcurrentHashMap<>())
-                .put(username, new AccountData(password, formattedCommand, isSynced, remoteId));
+                .put(username, new AccountData(password, formattedCommand, isSynced, remoteId, isFavorite, lastUsed));
         saveToFile();
+    }
+
+    public static synchronized void toggleFavorite(String serverIp, String username) {
+        AccountData existing = getPassword(serverIp, username);
+        if (existing != null) {
+            savePassword(serverIp, username, existing.password(), existing.command(), existing.isSynced(), existing.remoteId(), !existing.isFavorite(), existing.lastUsed());
+        }
+    }
+
+    public static synchronized void setFavorite(String serverIp, String username, boolean favorite) {
+        AccountData existing = getPassword(serverIp, username);
+        if (existing != null) {
+            savePassword(serverIp, username, existing.password(), existing.command(), existing.isSynced(), existing.remoteId(), favorite, existing.lastUsed());
+        }
+    }
+
+    public static synchronized void updateLastUsed(String serverIp, String username) {
+        AccountData existing = getPassword(serverIp, username);
+        if (existing != null) {
+            savePassword(serverIp, username, existing.password(), existing.command(), existing.isSynced(), existing.remoteId(), existing.isFavorite(), System.currentTimeMillis());
+        }
     }
 
     public static AccountData getPassword(String serverIp, String username) {
@@ -266,7 +302,7 @@ public class PasswordManager {
         if (serverAccounts != null) {
             AccountData old = serverAccounts.get(username.trim());
             if (old != null) {
-                serverAccounts.put(username.trim(), new AccountData(old.password(), old.command(), false, ""));
+                serverAccounts.put(username.trim(), new AccountData(old.password(), old.command(), false, "", old.isFavorite(), old.lastUsed()));
                 saveToFile();
             }
         }
@@ -278,7 +314,7 @@ public class PasswordManager {
             for (Map.Entry<String, AccountData> aEntry : sEntry.getValue().entrySet()) {
                 AccountData old = aEntry.getValue();
                 if (old.isSynced()) {
-                    aEntry.setValue(new AccountData(old.password(), old.command(), false, ""));
+                    aEntry.setValue(new AccountData(old.password(), old.command(), false, "", old.isFavorite(), old.lastUsed()));
                 }
             }
         }
@@ -442,6 +478,8 @@ public class PasswordManager {
                     acc.addProperty("command", aEntry.getValue().command());
                     acc.addProperty("isSynced", aEntry.getValue().isSynced());
                     acc.addProperty("remoteId", aEntry.getValue().remoteId());
+                    acc.addProperty("isFavorite", aEntry.getValue().isFavorite());
+                    acc.addProperty("lastUsed", aEntry.getValue().lastUsed());
                     accs.add(aEntry.getKey(), acc);
                 }
                 servers.add(sEntry.getKey(), accs);
@@ -519,6 +557,9 @@ public class PasswordManager {
 
     public static synchronized int importBackupFile(File file, String backupPassword) {
         if (file == null || !file.exists()) return -1;
+        if (file.getName().toLowerCase(java.util.Locale.ROOT).endsWith(".csv")) {
+            return importBitwardenCsv(file);
+        }
         try (FileReader reader = new FileReader(file)) {
             JsonObject wrapper = GSON.fromJson(reader, JsonObject.class);
             if (wrapper == null) return -2;
@@ -582,7 +623,9 @@ public class PasswordManager {
                     String cmd = acc.has("command") ? acc.get("command").getAsString() : "/login";
                     boolean synced = acc.has("isSynced") && acc.get("isSynced").getAsBoolean();
                     String remoteId = acc.has("remoteId") ? acc.get("remoteId").getAsString() : "";
-                    savePassword(serverIp, user, pass, cmd, synced, remoteId);
+                    boolean favorite = acc.has("isFavorite") && acc.get("isFavorite").getAsBoolean();
+                    long lastUsed = acc.has("lastUsed") ? acc.get("lastUsed").getAsLong() : 0L;
+                    savePassword(serverIp, user, pass, cmd, synced, remoteId, favorite, lastUsed);
                     count++;
                 }
             }
@@ -592,5 +635,159 @@ public class PasswordManager {
             e.printStackTrace();
             return -2;
         }
+    }
+
+    public static synchronized String exportBitwardenCsv() {
+        try {
+            Path backupsDir = CONFIG_DIR.resolve("backups");
+            if (!Files.exists(backupsDir)) {
+                Files.createDirectories(backupsDir);
+            }
+            String timestamp = new java.text.SimpleDateFormat("yyyy-MM-dd_HH-mm-ss").format(new java.util.Date());
+            Path exportFile = backupsDir.resolve("sypass-export-bitwarden-" + timestamp + ".csv");
+
+            StringBuilder csv = new StringBuilder();
+            csv.append("folder,favorite,type,name,notes,fields,reprompt,login_uri,login_username,login_password,login_totp\n");
+
+            for (Map.Entry<String, Map<String, AccountData>> sEntry : memoryData.entrySet()) {
+                String serverIp = sEntry.getKey();
+                for (Map.Entry<String, AccountData> aEntry : sEntry.getValue().entrySet()) {
+                    String username = aEntry.getKey();
+                    AccountData acc = aEntry.getValue();
+
+                    csv.append(escapeCsvField("Minecraft")).append(",");
+                    csv.append(acc.isFavorite() ? "1" : "0").append(",");
+                    csv.append("login,");
+                    csv.append(escapeCsvField(serverIp)).append(",");
+                    csv.append(escapeCsvField(acc.command())).append(",");
+                    csv.append(","); // fields
+                    csv.append("0,"); // reprompt
+                    csv.append(escapeCsvField(serverIp)).append(",");
+                    csv.append(escapeCsvField(username)).append(",");
+                    csv.append(escapeCsvField(acc.password())).append(",");
+                    csv.append("\n"); // login_totp
+                }
+            }
+
+            writeSecureFile(exportFile, csv.toString().getBytes(StandardCharsets.UTF_8));
+            return exportFile.getFileName().toString();
+        } catch (Exception e) {
+            e.printStackTrace();
+            return null;
+        }
+    }
+
+    private static String escapeCsvField(String field) {
+        if (field == null) return "";
+        if (field.contains(",") || field.contains("\"") || field.contains("\n") || field.contains("\r")) {
+            return "\"" + field.replace("\"", "\"\"") + "\"";
+        }
+        return field;
+    }
+
+    public static synchronized int importLatestCsvBackup() {
+        try {
+            Path backupsDir = CONFIG_DIR.resolve("backups");
+            if (!Files.exists(backupsDir)) {
+                return -1;
+            }
+            File[] files = backupsDir.toFile().listFiles((dir, name) -> name.toLowerCase(java.util.Locale.ROOT).endsWith(".csv"));
+            if (files == null || files.length == 0) {
+                return -1;
+            }
+            java.util.Arrays.sort(files, (a, b) -> Long.compare(b.lastModified(), a.lastModified()));
+            return importBitwardenCsv(files[0]);
+        } catch (Exception e) {
+            e.printStackTrace();
+            return -2;
+        }
+    }
+
+    public static synchronized int importBitwardenCsv(File file) {
+        if (file == null || !file.exists()) return -1;
+        try {
+            List<String> lines = Files.readAllLines(file.toPath(), StandardCharsets.UTF_8);
+            if (lines.isEmpty()) return 0;
+
+            List<String> header = parseCsvLine(lines.get(0));
+            Map<String, Integer> colIndex = new HashMap<>();
+            for (int i = 0; i < header.size(); i++) {
+                colIndex.put(header.get(i).trim().toLowerCase(java.util.Locale.ROOT), i);
+            }
+
+            int nameIdx = colIndex.getOrDefault("name", colIndex.getOrDefault("title", -1));
+            int userIdx = colIndex.getOrDefault("login_username", colIndex.getOrDefault("username", -1));
+            int passIdx = colIndex.getOrDefault("login_password", colIndex.getOrDefault("password", -1));
+            int notesIdx = colIndex.getOrDefault("notes", colIndex.getOrDefault("comment", -1));
+            int favIdx = colIndex.getOrDefault("favorite", -1);
+            int uriIdx = colIndex.getOrDefault("login_uri", colIndex.getOrDefault("url", -1));
+
+            if (passIdx == -1) {
+                return -2; // Not a valid password CSV
+            }
+
+            int count = 0;
+            for (int i = 1; i < lines.size(); i++) {
+                String line = lines.get(i).trim();
+                if (line.isEmpty()) continue;
+                List<String> cols = parseCsvLine(line);
+
+                String server = nameIdx >= 0 && nameIdx < cols.size() ? cols.get(nameIdx).trim() : "";
+                if (server.isEmpty() && uriIdx >= 0 && uriIdx < cols.size()) {
+                    server = cols.get(uriIdx).trim();
+                }
+                String username = userIdx >= 0 && userIdx < cols.size() ? cols.get(userIdx).trim() : "";
+                String password = passIdx >= 0 && passIdx < cols.size() ? cols.get(passIdx).trim() : "";
+                String notes = notesIdx >= 0 && notesIdx < cols.size() ? cols.get(notesIdx).trim() : "";
+                boolean favorite = false;
+                if (favIdx >= 0 && favIdx < cols.size()) {
+                    String favVal = cols.get(favIdx).trim();
+                    favorite = "1".equals(favVal) || "true".equalsIgnoreCase(favVal);
+                }
+
+                if (server.isEmpty() || username.isEmpty() || password.isEmpty()) {
+                    continue;
+                }
+
+                String cmd = "/login";
+                if (notes.startsWith("/")) {
+                    cmd = notes.split("\\s+")[0];
+                }
+
+                savePassword(server, username, password, cmd, false, "", favorite, 0L);
+                count++;
+            }
+
+            saveToFile();
+            return count;
+        } catch (Exception e) {
+            e.printStackTrace();
+            return -2;
+        }
+    }
+
+    public static List<String> parseCsvLine(String line) {
+        List<String> result = new ArrayList<>();
+        if (line == null) return result;
+        StringBuilder current = new StringBuilder();
+        boolean inQuotes = false;
+        for (int i = 0; i < line.length(); i++) {
+            char c = line.charAt(i);
+            if (c == '\"') {
+                if (inQuotes && i + 1 < line.length() && line.charAt(i + 1) == '\"') {
+                    current.append('\"');
+                    i++;
+                } else {
+                    inQuotes = !inQuotes;
+                }
+            } else if (c == ',' && !inQuotes) {
+                result.add(current.toString());
+                current.setLength(0);
+            } else {
+                current.append(c);
+            }
+        }
+        result.add(current.toString());
+        return result;
     }
 }

@@ -15,8 +15,6 @@ import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.attribute.PosixFilePermission;
-import java.nio.file.attribute.PosixFilePermissions;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
@@ -112,17 +110,23 @@ public class BitwardenManager {
 
     public static void invalidateStatusCache() {
         lastStatusQueryMs = 0;
+        cachedStatus = null;
         cachedExecutablePath = null;
     }
 
     public static boolean isLocalCliInstalled() {
         if (!Files.exists(LOCAL_CLI_PATH)) return false;
-        if (!IS_WINDOWS && !Files.isExecutable(LOCAL_CLI_PATH)) {
-            try {
-                LOCAL_CLI_PATH.toFile().setExecutable(true, false);
-            } catch (Exception ignored) {}
+        if (!IS_WINDOWS) {
+            File file = LOCAL_CLI_PATH.toFile();
+            if (!file.canExecute()) {
+                try {
+                    file.setExecutable(true, false);
+                    file.setReadable(true, false);
+                } catch (Exception ignored) {}
+            }
+            return file.canExecute() || Files.isExecutable(LOCAL_CLI_PATH);
         }
-        return IS_WINDOWS || Files.isExecutable(LOCAL_CLI_PATH);
+        return true;
     }
 
     public static boolean deleteLocalCli() {
@@ -139,13 +143,16 @@ public class BitwardenManager {
     }
 
     public static String getCliExecutable() {
-        if (cachedExecutablePath != null) {
-            return cachedExecutablePath;
+        if (isLocalCliInstalled()) {
+            return LOCAL_CLI_PATH.toAbsolutePath().toString();
         }
 
-        if (isLocalCliInstalled()) {
-            cachedExecutablePath = LOCAL_CLI_PATH.toAbsolutePath().toString();
-            return cachedExecutablePath;
+        if (cachedExecutablePath != null && !cachedExecutablePath.equals("bw") && !cachedExecutablePath.equals("bw.cmd")) {
+            if (Files.exists(Path.of(cachedExecutablePath))) {
+                return cachedExecutablePath;
+            } else {
+                cachedExecutablePath = null;
+            }
         }
 
         String userHome = System.getProperty("user.home", "");
@@ -199,9 +206,7 @@ public class BitwardenManager {
             }
         }
 
-        String fallback = IS_WINDOWS ? "bw.cmd" : "bw";
-        cachedExecutablePath = fallback;
-        return fallback;
+        return IS_WINDOWS ? "bw.cmd" : "bw";
     }
 
     public static boolean isCliInstalled() {
@@ -910,11 +915,17 @@ public class BitwardenManager {
 
     private static BwResult executeBwCommandWithEnvAndStdin(byte[] stdinData, Map<String, String> extraEnv, String... args) {
         try {
-            String executable = getCliExecutable();
-            if (isLocalCliInstalled() && !IS_WINDOWS) {
-                File f = LOCAL_CLI_PATH.toFile();
+            String executable = isLocalCliInstalled()
+                    ? LOCAL_CLI_PATH.toAbsolutePath().toString()
+                    : getCliExecutable();
+
+            if (!IS_WINDOWS && Files.exists(Path.of(executable))) {
+                File f = new File(executable);
                 if (!f.canExecute()) {
-                    f.setExecutable(true, false);
+                    try {
+                        f.setExecutable(true, false);
+                        f.setReadable(true, false);
+                    } catch (Exception ignored) {}
                 }
             }
 

@@ -22,7 +22,6 @@ import net.minecraft.util.Formatting;
 import net.minecraft.util.Util;
 import org.jetbrains.annotations.NotNull;
 
-import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.HashSet;
@@ -154,9 +153,13 @@ public class SYPassScreen extends BaseOwoScreen<FlowLayout> {
                     .formatted(activeTab == Tab.BITWARDEN ? Formatting.YELLOW : Formatting.GRAY);
             bwTabBtn = Components.button(bwTabText, b -> {
                 activeTab = Tab.BITWARDEN;
+                BitwardenManager.invalidateStatusCache();
+                this.cachedStatusInfo = null;
                 if (BitwardenManager.hasActiveSession()) {
                     this.bwStage = BwStage.LOGGED_IN;
-                } else if (this.cachedStatusInfo == null) {
+                } else if (!BitwardenManager.isCliInstalled()) {
+                    this.bwStage = BwStage.CLI_NOT_FOUND;
+                } else {
                     this.bwStage = BwStage.CHECKING_STATUS;
                 }
                 updateBitwardenStatusAsync();

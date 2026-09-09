@@ -18,6 +18,7 @@ public class SYPassConfig {
     private static ConfigData data = new ConfigData();
 
     public static class ConfigData {
+        public boolean enableBitwarden = false;
         public boolean autoLogin = true;
         public boolean autoSync = true;
         public boolean showToasts = true;
@@ -131,6 +132,15 @@ public class SYPassConfig {
 
     public static void setPreventRegisterOverwriteEnabled(boolean enabled) {
         data.preventRegisterOverwrite = enabled;
+        save();
+    }
+
+    public static boolean isBitwardenEnabled() {
+        return data.enableBitwarden;
+    }
+
+    public static void setBitwardenEnabled(boolean enabled) {
+        data.enableBitwarden = enabled;
         save();
     }
 }

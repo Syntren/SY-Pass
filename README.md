@@ -11,9 +11,9 @@
 - **⚡ Smart & Automated Server Login:** Automatically logs into servers upon connection (can be fully toggled on/off in Settings). Includes **Smart Auto-Login** that scans server chat and action bar prompts (`/login`, `/l`) to authenticate dynamically without unnecessary delays, spoofing protection against player chat triggers, and a dedicated **Quick Re-Login hotkey (`K`)** for on-demand authentication.
 - **✨ Quick & Smart Auto-Registration:** One-step registration on servers (`/sypass register [len]` or `/sypass quickreg`). Generates a cryptographically secure password, copies it to the clipboard, saves it locally, syncs to Bitwarden, and submits the `/register <password> <password>` command. Includes built-in **Overwrite Protection** (configurable in Settings) to prevent accidental loss of existing credentials. Enable **Smart Auto-Register** in Settings to perform registration automatically when prompts are detected!
 - **🌐 Smart Server Address Matching:** Automatically normalizes server IP addresses and hostnames, seamlessly matching entries regardless of default ports (`:25565`) or case variations.
-- **☁️ Bitwarden Cloud Sync:** Full two-way synchronization (Pull, Push, Full Sync) with your Bitwarden vault via a dedicated daemon worker pool, ensuring zero frame drops or render thread blocking. Includes one-click deletion of specific cloud entries directly from the password list.
-- **🛡️ Multi-Factor Authentication (2FA):** Native support for both **Authenticator App (TOTP)** and **Email 2FA** (with in-GUI "Send Code" support) as well as API Key login.
-- **📥 Secure In-Game CLI Downloader:** Automatically downloads, extracts, and configures the official Bitwarden CLI executable for your platform (Linux, Windows, macOS) with animated progress indicators, HTTPS redirect allowlist domain verification, and binary header validation.
+- **☁️ Optional Bitwarden Cloud Sync:** Full two-way synchronization (Pull, Push, Full Sync) with your Bitwarden vault via the official Bitwarden CLI. Disabled by default in Settings for a pure, local-first password management experience. When enabled, it provides one-click deletion of cloud entries and seamless background synchronization.
+- **🛡️ Multi-Factor Authentication & Zero-Password Routing:** Native support for Authenticator App (TOTP), Email 2FA, API Key login, and direct **Session Key (`BW_SESSION`)** unlock — allowing you to unlock your vault without ever entering your master password inside the game!
+- **🔒 Security & CurseForge Compliant (No Runtime Downloads):** SY-Pass never downloads external binaries or executables at runtime. It interfaces strictly with the official Bitwarden CLI installed on your system (via `winget`, `brew`, `npm`, etc.) or manually placed in `config/sypass/bw` (`bw.exe`) by the user.
 - **🎲 Password Generator:** Generate strong, cryptographically secure passwords (`/sypass generate [len]` or via GUI).
 - **💾 Local Encrypted Backups:** Export and import password backups with optional password-based encryption or portable unencrypted backups with restricted local filesystem permissions.
 - **💻 Client Commands:**
@@ -34,7 +34,7 @@
 - **Fabric API**
 - **oωo-lib:** >= 0.12.15
 - **Java:** 21+
-- *(Optional)* **Bitwarden CLI:** Auto-downloaded by the mod on demand, or placed in `config/sypass/bw` (`bw.exe` on Windows) / system `PATH`.
+- *(Optional)* **Bitwarden CLI:** Only required if Bitwarden sync is enabled in settings. Can be installed on your system (`winget install Bitwarden.CLI`, `brew install bitwarden-cli`, or `npm install -g @bitwarden/cli`), or placed manually into `config/sypass/bw` (`bw.exe` on Windows).
 
 ---
 
@@ -48,7 +48,7 @@ To compile the mod, run:
 
 The compiled mod JAR will be placed in:
 ```
-build/libs/sypass-fabric-1.2.0-mc1.21-1.21.1.jar
+build/libs/sypass-fabric-1.3.0-mc1.21-1.21.1.jar
 ```
 
 ---

@@ -103,7 +103,7 @@ public class SYPassCommands {
         String serverIp = server.address;
         PasswordManager.savePassword(serverIp, username, cleanPassword, cleanCommand);
 
-        if (SYPassConfig.isAutoSyncEnabled() && BitwardenManager.hasActiveSession()) {
+        if (SYPassConfig.isBitwardenEnabled() && SYPassConfig.isAutoSyncEnabled() && BitwardenManager.hasActiveSession()) {
             BitwardenManager.pushSingleItemAsync(serverIp, username, cleanPassword, cleanCommand);
         }
 
@@ -127,7 +127,7 @@ public class SYPassCommands {
 
         PasswordManager.removePassword(serverIp, username);
 
-        if (wasSynced && SYPassConfig.isAutoSyncEnabled() && BitwardenManager.hasActiveSession()) {
+        if (wasSynced && SYPassConfig.isBitwardenEnabled() && SYPassConfig.isAutoSyncEnabled() && BitwardenManager.hasActiveSession()) {
             BitwardenManager.deleteSingleItemAsync(serverIp, username, remoteId);
         }
 

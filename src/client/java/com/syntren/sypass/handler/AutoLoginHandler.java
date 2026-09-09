@@ -302,7 +302,7 @@ public class AutoLoginHandler {
         // Store password with standard /login command for future automatic logins
         PasswordManager.savePassword(serverIp, username, generatedPassword, "/login");
 
-        if (SYPassConfig.isAutoSyncEnabled() && BitwardenManager.hasActiveSession()) {
+        if (SYPassConfig.isBitwardenEnabled() && SYPassConfig.isAutoSyncEnabled() && BitwardenManager.hasActiveSession()) {
             BitwardenManager.pushSingleItemAsync(serverIp, username, generatedPassword, "/login");
         }
 

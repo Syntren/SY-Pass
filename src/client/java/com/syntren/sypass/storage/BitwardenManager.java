@@ -11,9 +11,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.*;
-import java.net.HttpURLConnection;
 import java.net.URI;
-import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -24,8 +22,6 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
-import java.util.zip.ZipEntry;
-import java.util.zip.ZipInputStream;
 
 public class BitwardenManager {
     private static final Logger LOGGER = LoggerFactory.getLogger("SYPass");
@@ -45,15 +41,6 @@ public class BitwardenManager {
             }
     );
 
-    private static final Set<String> TRUSTED_DOWNLOAD_DOMAINS = Set.of(
-            "bitwarden.com",
-            "vault.bitwarden.com",
-            "github.com",
-            "objects.githubusercontent.com",
-            "github-releases.githubusercontent.com",
-            "release-assets.githubusercontent.com"
-    );
-
     private static volatile String cachedExecutablePath = null;
     private static BwStatusInfo cachedStatus = null;
     private static long lastStatusQueryMs = 0;
@@ -70,53 +57,6 @@ public class BitwardenManager {
         String domain = email.substring(at);
         String maskedName = (name.length() <= 2) ? "*" : name.charAt(0) + "***" + name.charAt(name.length() - 1);
         return maskedName + domain;
-    }
-
-    private static boolean isTrustedDownloadDomain(String urlStr) {
-        try {
-            URI uri = URI.create(urlStr);
-            String host = uri.getHost();
-            if (host == null) return false;
-            String lowerHost = host.toLowerCase(Locale.ROOT);
-            for (String trusted : TRUSTED_DOWNLOAD_DOMAINS) {
-                if (lowerHost.equals(trusted) || lowerHost.endsWith("." + trusted)) {
-                    return true;
-                }
-            }
-        } catch (Exception ignored) {}
-        return false;
-    }
-
-    private static boolean verifyBinaryHeader(Path binaryPath) {
-        if (!Files.exists(binaryPath)) return false;
-        try (InputStream is = Files.newInputStream(binaryPath)) {
-            byte[] magic = new byte[4];
-            int read = is.read(magic);
-            if (read < 2) return false;
-
-            if (IS_WINDOWS) {
-                return magic[0] == 0x4D && magic[1] == 0x5A; // MZ header
-            } else if (IS_MAC) {
-                int b0 = magic[0] & 0xFF;
-                int b1 = magic[1] & 0xFF;
-                int b2 = magic[2] & 0xFF;
-                int b3 = magic[3] & 0xFF;
-                return (b0 == 0xCA && b1 == 0xFE && b2 == 0xBA && b3 == 0xBE)
-                        || (b0 == 0xFE && b1 == 0xED && b2 == 0xFA && (b3 == 0xCE || b3 == 0xCF))
-                        || ((b0 == 0xCE || b0 == 0xCF) && b1 == 0xFA && b2 == 0xED && b3 == 0xFE);
-            } else {
-                return magic[0] == 0x7F && magic[1] == 'E' && magic[2] == 'L' && magic[3] == 'F'; // ELF header
-            }
-        } catch (Exception e) {
-            LOGGER.warn("[SYPass] Failed to verify binary headers", e);
-            return false;
-        }
-    }
-
-    public interface DownloadProgressListener {
-        void onProgress(float progress, long downloadedBytes, long totalBytes, String statusText);
-        void onSuccess();
-        void onError(String errorMessage);
     }
 
     public record BwResult(int exitCode, String output) {}
@@ -176,7 +116,13 @@ public class BitwardenManager {
     }
 
     public static boolean isLocalCliInstalled() {
-        return Files.exists(LOCAL_CLI_PATH) && (IS_WINDOWS || Files.isExecutable(LOCAL_CLI_PATH));
+        if (!Files.exists(LOCAL_CLI_PATH)) return false;
+        if (!IS_WINDOWS && !Files.isExecutable(LOCAL_CLI_PATH)) {
+            try {
+                LOCAL_CLI_PATH.toFile().setExecutable(true, false);
+            } catch (Exception ignored) {}
+        }
+        return IS_WINDOWS || Files.isExecutable(LOCAL_CLI_PATH);
     }
 
     public static boolean deleteLocalCli() {
@@ -190,145 +136,6 @@ public class BitwardenManager {
             LOGGER.error("[SYPass] Failed to delete local CLI", e);
             return false;
         }
-    }
-
-    public static String getDownloadUrlForCurrentPlatform() {
-        if (IS_WINDOWS) {
-            return "https://bitwarden.com/download/?app=cli&platform=windows";
-        } else if (IS_MAC) {
-            return "https://bitwarden.com/download/?app=cli&platform=macos";
-        } else {
-            return "https://bitwarden.com/download/?app=cli&platform=linux";
-        }
-    }
-
-    public static void downloadAndInstallCliAsync(DownloadProgressListener listener) {
-        BW_EXECUTOR.execute(() -> {
-            File tempZip = CONFIG_DIR.resolve("bw_temp.zip").toFile();
-            try {
-                if (!Files.exists(CONFIG_DIR)) {
-                    Files.createDirectories(CONFIG_DIR);
-                }
-
-                String downloadUrl = getDownloadUrlForCurrentPlatform();
-                listener.onProgress(0.05f, 0, -1, Text.translatable("sypass.gui.bw.download.connecting").getString());
-
-                URL url = URI.create(downloadUrl).toURL();
-                HttpURLConnection connection = null;
-                int redirects = 0;
-                while (redirects < 6) {
-                    if (!isTrustedDownloadDomain(url.toString())) {
-                        throw new SecurityException("Untrusted download domain rejected: " + url.getHost());
-                    }
-                    connection = (HttpURLConnection) url.openConnection();
-                    connection.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36");
-                    connection.setConnectTimeout(15000);
-                    connection.setReadTimeout(30000);
-                    connection.setInstanceFollowRedirects(false);
-                    int status = connection.getResponseCode();
-                    if (status == HttpURLConnection.HTTP_MOVED_TEMP || status == HttpURLConnection.HTTP_MOVED_PERM || status == 307 || status == 308) {
-                        String newUrl = connection.getHeaderField("Location");
-                        if (newUrl == null || !newUrl.startsWith("https://")) {
-                            throw new SecurityException("Insecure non-HTTPS redirect rejected");
-                        }
-                        url = URI.create(newUrl).toURL();
-                        redirects++;
-                    } else if (status == HttpURLConnection.HTTP_OK) {
-                        break;
-                    } else {
-                        throw new IOException("HTTP error response: " + status);
-                    }
-                }
-
-                if (connection == null) {
-                    throw new IOException(Text.translatable("sypass.gui.bw.download.error.http", downloadUrl).getString());
-                }
-
-                long totalBytes = connection.getContentLengthLong();
-                long downloadedBytes = 0;
-                long lastUpdate = 0;
-
-                try (InputStream in = new BufferedInputStream(connection.getInputStream(), 65536);
-                     OutputStream out = new BufferedOutputStream(new FileOutputStream(tempZip), 65536)) {
-                    byte[] buffer = new byte[65536];
-                    int bytesRead;
-                    while ((bytesRead = in.read(buffer)) != -1) {
-                        out.write(buffer, 0, bytesRead);
-                        downloadedBytes += bytesRead;
-                        long now = System.currentTimeMillis();
-                        if (now - lastUpdate > 40) {
-                            lastUpdate = now;
-                            float progress = totalBytes > 0 ? (float) downloadedBytes / totalBytes : 0.5f;
-                            listener.onProgress(progress, downloadedBytes, totalBytes, Text.translatable("sypass.gui.bw.download.downloading").getString());
-                        }
-                    }
-                    out.flush();
-                }
-
-                listener.onProgress(1.0f, downloadedBytes, totalBytes, Text.translatable("sypass.gui.bw.download.extracting").getString());
-
-                boolean extracted = false;
-                try (ZipInputStream zis = new ZipInputStream(new BufferedInputStream(new FileInputStream(tempZip), 65536))) {
-                    ZipEntry entry;
-                    while ((entry = zis.getNextEntry()) != null) {
-                        String name = entry.getName();
-                        if (name.equals("bw") || name.equals("bw.exe") || name.endsWith("/bw") || name.endsWith("/bw.exe")) {
-                            try (BufferedOutputStream fos = new BufferedOutputStream(new FileOutputStream(LOCAL_CLI_PATH.toFile()), 65536)) {
-                                byte[] buf = new byte[65536];
-                                int len;
-                                while ((len = zis.read(buf)) != -1) {
-                                    fos.write(buf, 0, len);
-                                }
-                                fos.flush();
-                            }
-                            extracted = true;
-                            break;
-                        }
-                    }
-                }
-
-                tempZip.delete();
-
-                if (!extracted) {
-                    listener.onError(Text.translatable("sypass.gui.bw.download.error.not_found_in_zip").getString());
-                    return;
-                }
-
-                // Verify binary headers (magic bytes) to ensure authenticity and integrity
-                if (!verifyBinaryHeader(LOCAL_CLI_PATH)) {
-                    Files.deleteIfExists(LOCAL_CLI_PATH);
-                    listener.onError("Downloaded binary failed signature verification!");
-                    return;
-                }
-
-                if (!IS_WINDOWS) {
-                    File cliFile = LOCAL_CLI_PATH.toFile();
-                    cliFile.setExecutable(true, false);
-                    cliFile.setReadable(true, false);
-                    cliFile.setWritable(true, true);
-                    try {
-                        Set<PosixFilePermission> perms = PosixFilePermissions.fromString("rwxr-xr-x");
-                        Files.setPosixFilePermissions(LOCAL_CLI_PATH, perms);
-                    } catch (Exception ignored) {}
-                }
-
-                invalidateStatusCache();
-                listener.onProgress(1.0f, downloadedBytes, totalBytes, Text.translatable("sypass.gui.bw.download.verifying").getString());
-
-                if (isCliInstalled()) {
-                    listener.onProgress(1.0f, downloadedBytes, totalBytes, Text.translatable("sypass.gui.bw.download.success").getString());
-                    try { Thread.sleep(450); } catch (Exception ignored) {}
-                    listener.onSuccess();
-                } else {
-                    listener.onError(Text.translatable("sypass.gui.bw.download.error.launch_failed").getString());
-                }
-
-            } catch (Exception e) {
-                LOGGER.error("[SYPass] Error downloading Bitwarden CLI", e);
-                tempZip.delete();
-                listener.onError(Text.translatable("sypass.gui.bw.download.error.failed", e.getMessage()).getString());
-            }
-        });
     }
 
     public static String getCliExecutable() {
@@ -652,6 +459,37 @@ public class BitwardenManager {
             }
         } catch (Exception e) {
             LOGGER.error("[SYPass] Error logging in with API key", e);
+            return new BwLoginResponse(LoginStatus.ERROR, Text.translatable("sypass.gui.bw.error.generic", e.getMessage()).getString(), "");
+        }
+    }
+
+    public static BwLoginResponse loginWithSessionKey(String sessionKeyToTest) {
+        if (sessionKeyToTest == null || sessionKeyToTest.isBlank()) {
+            return new BwLoginResponse(LoginStatus.ERROR, Text.translatable("sypass.gui.bw.error.empty_session").getString(), "");
+        }
+
+        if (!isCliInstalled()) {
+            return new BwLoginResponse(LoginStatus.CLI_NOT_FOUND, Text.translatable("sypass.gui.bw.error.cli_not_found").getString(), "");
+        }
+
+        try {
+            String customServer = com.syntren.sypass.config.SYPassConfig.getCustomServerUrl();
+            if (!customServer.isEmpty()) {
+                configureServer(customServer);
+            }
+
+            String key = sessionKeyToTest.trim();
+            Map<String, String> env = Map.of("BW_SESSION", key);
+            BwResult syncRes = executeBwCommandWithEnv(env, "sync");
+            if (syncRes != null && syncRes.exitCode() == 0) {
+                setSessionKey(key);
+                return new BwLoginResponse(LoginStatus.SUCCESS, Text.translatable("sypass.gui.bw.error.session_success").getString(), sessionKey);
+            } else {
+                String err = (syncRes != null && !syncRes.output().isBlank()) ? syncRes.output().replace("\n", " ").trim() : "Invalid session key";
+                return new BwLoginResponse(LoginStatus.INVALID_PASSWORD, Text.translatable("sypass.gui.bw.error.invalid_session", err).getString(), "");
+            }
+        } catch (Exception e) {
+            LOGGER.error("[SYPass] Error logging in with session key", e);
             return new BwLoginResponse(LoginStatus.ERROR, Text.translatable("sypass.gui.bw.error.generic", e.getMessage()).getString(), "");
         }
     }

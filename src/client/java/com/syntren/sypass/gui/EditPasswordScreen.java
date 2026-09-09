@@ -40,7 +40,7 @@ public class EditPasswordScreen extends BaseOwoScreen<FlowLayout> {
     private boolean showPassword = true;
 
     public EditPasswordScreen(Screen parent) {
-        this(parent, "", "", "", "/login", BitwardenManager.hasActiveSession() && SYPassConfig.isAutoSyncEnabled());
+        this(parent, "", "", "", "/login", SYPassConfig.isBitwardenEnabled() && BitwardenManager.hasActiveSession() && SYPassConfig.isAutoSyncEnabled());
     }
 
     public EditPasswordScreen(Screen parent, String serverIp, String username, String password, String command, boolean isSynced) {
@@ -157,16 +157,18 @@ public class EditPasswordScreen extends BaseOwoScreen<FlowLayout> {
         this.commandField.setPlaceholder(Text.literal("/login"));
         card.child(this.commandField);
 
-        // Перемикач синхронізації з Bitwarden
-        ButtonComponent syncToggleBtn = Components.button(
-                Text.literal(syncWithBitwarden ? "§a☁ " : "§7☁ ").append(Text.translatable("sypass.gui.sync.toggle")),
-                b -> {
-                    syncWithBitwarden = !syncWithBitwarden;
-                    b.setMessage(Text.literal(syncWithBitwarden ? "§a☁ " : "§7☁ ").append(Text.translatable("sypass.gui.sync.toggle")));
-                }
-        );
-        syncToggleBtn.horizontalSizing(Sizing.fill(100));
-        card.child(syncToggleBtn);
+        // Перемикач синхронізації з Bitwarden (лише якщо інтеграція увімкнена)
+        if (com.syntren.sypass.config.SYPassConfig.isBitwardenEnabled()) {
+            ButtonComponent syncToggleBtn = Components.button(
+                    Text.literal(syncWithBitwarden ? "§a☁ " : "§7☁ ").append(Text.translatable("sypass.gui.sync.toggle")),
+                    b -> {
+                        syncWithBitwarden = !syncWithBitwarden;
+                        b.setMessage(Text.literal(syncWithBitwarden ? "§a☁ " : "§7☁ ").append(Text.translatable("sypass.gui.sync.toggle")));
+                    }
+            );
+            syncToggleBtn.horizontalSizing(Sizing.fill(100));
+            card.child(syncToggleBtn);
+        }
 
         // Повідомлення про помилку
         this.errorLabel = Components.label(Text.empty());
@@ -233,20 +235,22 @@ public class EditPasswordScreen extends BaseOwoScreen<FlowLayout> {
         PasswordManager.AccountData currentAcc = isEditing ? PasswordManager.getPassword(initialServerIp, initialUsername) : null;
         String currentRemoteId = (currentAcc != null) ? currentAcc.remoteId() : "";
 
+        boolean syncEnabled = SYPassConfig.isBitwardenEnabled() && SYPassConfig.isAutoSyncEnabled() && BitwardenManager.hasActiveSession();
+
         if (isEditing && (!initialServerIp.equalsIgnoreCase(server) || !initialUsername.equalsIgnoreCase(user))) {
             PasswordManager.removePassword(initialServerIp, initialUsername);
-            if (SYPassConfig.isAutoSyncEnabled() && BitwardenManager.hasActiveSession()) {
+            if (syncEnabled) {
                 BitwardenManager.deleteSingleItemAsync(initialServerIp, initialUsername, currentRemoteId);
             }
             currentRemoteId = "";
-        } else if (isEditing && !syncWithBitwarden && currentAcc != null && currentAcc.isSynced() && BitwardenManager.hasActiveSession()) {
+        } else if (isEditing && !syncWithBitwarden && currentAcc != null && currentAcc.isSynced() && syncEnabled) {
             BitwardenManager.deleteFromBitwardenOnlyAsync(initialServerIp, initialUsername, currentRemoteId);
             currentRemoteId = "";
         }
 
         PasswordManager.savePassword(server, user, pass, cmd.isEmpty() ? "/login" : cmd, syncWithBitwarden, currentRemoteId);
 
-        if (syncWithBitwarden && SYPassConfig.isAutoSyncEnabled() && BitwardenManager.hasActiveSession()) {
+        if (syncWithBitwarden && syncEnabled) {
             BitwardenManager.pushSingleItemAsync(server, user, pass, cmd.isEmpty() ? "/login" : cmd);
         }
 

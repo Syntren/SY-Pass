@@ -25,6 +25,7 @@
   "sypass.gui.button.delete_bw.tooltip": "Delete this password from Bitwarden only",
   "sypass.gui.button.delete_bw.confirm": "Confirm deletion from Bitwarden!",
   "sypass.gui.button.generate.tooltip": "Generate random strong password",
+  "sypass.gui.button.load_more": "Load more... (%d remaining)",
   "sypass.gui.button.favorite.tooltip": "Add to favorites",
   "sypass.gui.button.unfavorite.tooltip": "Remove from favorites",
   "sypass.gui.sort.favorites": "Sort: Favorites first",

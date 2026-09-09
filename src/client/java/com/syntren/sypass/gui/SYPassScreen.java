@@ -91,6 +91,8 @@ public class SYPassScreen extends BaseOwoScreen<FlowLayout> {
     private SortMode sortMode = SortMode.FAVORITES_FIRST;
     private boolean onlyFavorites = false;
     private boolean exportAsCsv = false;
+    private static final int PAGE_SIZE = 50;
+    private int displayLimit = PAGE_SIZE;
 
     private String searchQuery = "";
     private String statusMessage = "";
@@ -245,6 +247,7 @@ public class SYPassScreen extends BaseOwoScreen<FlowLayout> {
         searchBox.setPlaceholder(Text.translatable("sypass.gui.search.placeholder"));
         searchBox.onChanged().subscribe(text -> {
             this.searchQuery = text;
+            this.displayLimit = PAGE_SIZE;
             refreshPasswordList();
         });
 
@@ -252,6 +255,7 @@ public class SYPassScreen extends BaseOwoScreen<FlowLayout> {
             this.sortMode = this.sortMode.next();
             b.setMessage(Text.literal(this.sortMode.getLabel()));
             b.tooltip(Text.translatable(this.sortMode.getTranslationKey()));
+            this.displayLimit = PAGE_SIZE;
             refreshPasswordList();
         });
         sortBtn.horizontalSizing(Sizing.fixed(sortBtnWidth));
@@ -261,6 +265,7 @@ public class SYPassScreen extends BaseOwoScreen<FlowLayout> {
             this.onlyFavorites = !this.onlyFavorites;
             b.setMessage(Text.literal(this.onlyFavorites ? "§e★" : "§7☆"));
             b.tooltip(Text.translatable(this.onlyFavorites ? "sypass.gui.filter.all.tooltip" : "sypass.gui.filter.favorites.tooltip"));
+            this.displayLimit = PAGE_SIZE;
             refreshPasswordList();
         });
         favFilterBtn.horizontalSizing(Sizing.fixed(favFilterWidth));
@@ -389,9 +394,12 @@ public class SYPassScreen extends BaseOwoScreen<FlowLayout> {
             return;
         }
 
+        int totalMatches = entries.size();
+        List<EntryItem> visibleEntries = (totalMatches > this.displayLimit) ? entries.subList(0, this.displayLimit) : entries;
+
         boolean hasFavorites = false;
         boolean hasNonFavorites = false;
-        for (EntryItem entry : entries) {
+        for (EntryItem entry : visibleEntries) {
             if (entry.data().isFavorite()) {
                 hasFavorites = true;
             } else {
@@ -404,7 +412,7 @@ public class SYPassScreen extends BaseOwoScreen<FlowLayout> {
             boolean favHeaderAdded = false;
             boolean otherHeaderAdded = false;
 
-            for (EntryItem entry : entries) {
+            for (EntryItem entry : visibleEntries) {
                 if (entry.data().isFavorite()) {
                     if (!favHeaderAdded) {
                         container.child(createSectionHeader(Text.translatable("sypass.gui.section.favorites").formatted(Formatting.YELLOW, Formatting.BOLD)));
@@ -419,9 +427,23 @@ public class SYPassScreen extends BaseOwoScreen<FlowLayout> {
                 container.child(createPasswordCard(entry.serverIp(), entry.username(), entry.data()));
             }
         } else {
-            for (EntryItem entry : entries) {
+            for (EntryItem entry : visibleEntries) {
                 container.child(createPasswordCard(entry.serverIp(), entry.username(), entry.data()));
             }
+        }
+
+        if (totalMatches > this.displayLimit) {
+            int remaining = totalMatches - this.displayLimit;
+            ButtonComponent loadMoreBtn = Components.button(
+                    Text.translatable("sypass.gui.button.load_more", remaining),
+                    b -> {
+                        this.displayLimit += PAGE_SIZE;
+                        refreshPasswordList();
+                    }
+            );
+            loadMoreBtn.horizontalSizing(Sizing.fill(100));
+            loadMoreBtn.margins(Insets.vertical(4));
+            container.child(loadMoreBtn);
         }
     }
 

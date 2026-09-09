@@ -4,9 +4,11 @@ import com.syntren.sypass.storage.BitwardenManager;
 import com.syntren.sypass.storage.PasswordManager;
 import io.wispforest.owo.ui.base.BaseOwoScreen;
 import io.wispforest.owo.ui.component.ButtonComponent;
+import io.wispforest.owo.ui.component.CheckboxComponent;
 import io.wispforest.owo.ui.component.Components;
 import io.wispforest.owo.ui.component.LabelComponent;
 import io.wispforest.owo.ui.component.TextBoxComponent;
+import io.wispforest.owo.ui.component.TextureComponent;
 import io.wispforest.owo.ui.container.Containers;
 import io.wispforest.owo.ui.container.FlowLayout;
 import io.wispforest.owo.ui.container.ScrollContainer;
@@ -19,12 +21,15 @@ import net.minecraft.text.OrderedText;
 import net.minecraft.text.Style;
 import net.minecraft.text.Text;
 import net.minecraft.util.Formatting;
+import net.minecraft.util.Identifier;
 import net.minecraft.util.Util;
 import org.jetbrains.annotations.NotNull;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
@@ -57,10 +62,35 @@ public class SYPassScreen extends BaseOwoScreen<FlowLayout> {
         BITWARDEN
     }
 
+    public enum SortMode {
+        FAVORITES_FIRST("sypass.gui.sort.favorites", "§e★"),
+        ALPHABETICAL("sypass.gui.sort.alphabetical", "§fA-Z"),
+        RECENT("sypass.gui.sort.recent", "§b🕒");
+
+        private final String translationKey;
+        private final String label;
+
+        SortMode(String translationKey, String label) {
+            this.translationKey = translationKey;
+            this.label = label;
+        }
+
+        public String getTranslationKey() { return translationKey; }
+        public String getLabel() { return label; }
+
+        public SortMode next() {
+            SortMode[] vals = values();
+            return vals[(this.ordinal() + 1) % vals.length];
+        }
+    }
+
     private Tab activeTab = Tab.LOCAL_PASSWORDS;
     private BwStage bwStage = BitwardenManager.hasActiveSession() ? BwStage.LOGGED_IN : BwStage.CHECKING_STATUS;
     private BwStage preConfirmStage = BwStage.LOGGED_IN;
     private SettingsStage settingsStage = SettingsStage.MAIN;
+    private SortMode sortMode = SortMode.FAVORITES_FIRST;
+    private boolean onlyFavorites = false;
+    private boolean exportAsCsv = false;
 
     private String searchQuery = "";
     private String statusMessage = "";
@@ -199,7 +229,16 @@ public class SYPassScreen extends BaseOwoScreen<FlowLayout> {
     private void buildLocalTab(FlowLayout root) {
         int contentWidth = Math.min(460, this.width - 30);
 
-        TextBoxComponent searchBox = Components.textBox(Sizing.fixed(contentWidth));
+        FlowLayout searchRow = Containers.horizontalFlow(Sizing.fixed(contentWidth), Sizing.fixed(20));
+        searchRow.gap(4);
+        searchRow.verticalAlignment(VerticalAlignment.CENTER);
+        searchRow.margins(Insets.bottom(4));
+
+        int sortBtnWidth = 34;
+        int favFilterWidth = 22;
+        int searchWidth = contentWidth - sortBtnWidth - favFilterWidth - 8;
+
+        TextBoxComponent searchBox = Components.textBox(Sizing.fixed(searchWidth));
         searchBox.setMaxLength(256);
         searchBox.setText(this.searchQuery);
         searchBox.setCursor(0, false);
@@ -208,8 +247,29 @@ public class SYPassScreen extends BaseOwoScreen<FlowLayout> {
             this.searchQuery = text;
             refreshPasswordList();
         });
-        searchBox.margins(Insets.bottom(4));
-        root.child(searchBox);
+
+        ButtonComponent sortBtn = Components.button(Text.literal(this.sortMode.getLabel()), b -> {
+            this.sortMode = this.sortMode.next();
+            b.setMessage(Text.literal(this.sortMode.getLabel()));
+            b.tooltip(Text.translatable(this.sortMode.getTranslationKey()));
+            refreshPasswordList();
+        });
+        sortBtn.horizontalSizing(Sizing.fixed(sortBtnWidth));
+        sortBtn.tooltip(Text.translatable(this.sortMode.getTranslationKey()));
+
+        ButtonComponent favFilterBtn = Components.button(Text.literal(this.onlyFavorites ? "§e★" : "§7☆"), b -> {
+            this.onlyFavorites = !this.onlyFavorites;
+            b.setMessage(Text.literal(this.onlyFavorites ? "§e★" : "§7☆"));
+            b.tooltip(Text.translatable(this.onlyFavorites ? "sypass.gui.filter.all.tooltip" : "sypass.gui.filter.favorites.tooltip"));
+            refreshPasswordList();
+        });
+        favFilterBtn.horizontalSizing(Sizing.fixed(favFilterWidth));
+        favFilterBtn.tooltip(Text.translatable(this.onlyFavorites ? "sypass.gui.filter.all.tooltip" : "sypass.gui.filter.favorites.tooltip"));
+
+        searchRow.child(searchBox);
+        searchRow.child(sortBtn);
+        searchRow.child(favFilterBtn);
+        root.child(searchRow);
 
         this.passwordListContainer = Containers.verticalFlow(Sizing.fill(100), Sizing.content());
         this.passwordListContainer.gap(4);
@@ -265,12 +325,14 @@ public class SYPassScreen extends BaseOwoScreen<FlowLayout> {
         root.child(bottomPanel);
     }
 
+    private record EntryItem(String serverIp, String username, PasswordManager.AccountData data) {}
+
     private void populatePasswordList(FlowLayout container, String query) {
         container.clearChildren();
 
         String lowerQuery = query == null ? "" : query.trim().toLowerCase();
         Map<String, Map<String, PasswordManager.AccountData>> allData = PasswordManager.getAllData();
-        int addedCount = 0;
+        List<EntryItem> entries = new ArrayList<>();
 
         for (Map.Entry<String, Map<String, PasswordManager.AccountData>> serverEntry : allData.entrySet()) {
             String serverIp = serverEntry.getKey();
@@ -278,27 +340,89 @@ public class SYPassScreen extends BaseOwoScreen<FlowLayout> {
                 String username = accEntry.getKey();
                 PasswordManager.AccountData data = accEntry.getValue();
 
+                if (this.onlyFavorites && !data.isFavorite()) {
+                    continue;
+                }
+
                 boolean matches = lowerQuery.isEmpty() ||
                         serverIp.toLowerCase().contains(lowerQuery) ||
                         username.toLowerCase().contains(lowerQuery) ||
                         data.command().toLowerCase().contains(lowerQuery);
 
                 if (matches) {
-                    container.child(createPasswordCard(serverIp, username, data));
-                    addedCount++;
+                    entries.add(new EntryItem(serverIp, username, data));
                 }
             }
         }
 
-        if (addedCount == 0) {
+        switch (this.sortMode) {
+            case FAVORITES_FIRST -> entries.sort((a, b) -> {
+                if (a.data().isFavorite() != b.data().isFavorite()) {
+                    return a.data().isFavorite() ? -1 : 1;
+                }
+                int sComp = a.serverIp().compareToIgnoreCase(b.serverIp());
+                if (sComp != 0) return sComp;
+                return a.username().compareToIgnoreCase(b.username());
+            });
+            case ALPHABETICAL -> entries.sort((a, b) -> {
+                int sComp = a.serverIp().compareToIgnoreCase(b.serverIp());
+                if (sComp != 0) return sComp;
+                return a.username().compareToIgnoreCase(b.username());
+            });
+            case RECENT -> entries.sort((a, b) -> {
+                int rComp = Long.compare(b.data().lastUsed(), a.data().lastUsed());
+                if (rComp != 0) return rComp;
+                int sComp = a.serverIp().compareToIgnoreCase(b.serverIp());
+                if (sComp != 0) return sComp;
+                return a.username().compareToIgnoreCase(b.username());
+            });
+        }
+
+        if (entries.isEmpty()) {
             FlowLayout emptyLayout = Containers.verticalFlow(Sizing.fill(100), Sizing.fixed(80));
             emptyLayout.gap(4);
             emptyLayout.horizontalAlignment(HorizontalAlignment.CENTER);
             emptyLayout.verticalAlignment(VerticalAlignment.CENTER);
-            emptyLayout.child(Components.label(Text.translatable("sypass.gui.empty.title")).shadow(true));
-            emptyLayout.child(Components.label(Text.translatable("sypass.gui.empty.desc")).shadow(true));
+            emptyLayout.child(Components.label(Text.translatable(this.onlyFavorites ? "sypass.gui.empty.favorites" : "sypass.gui.empty.title")).shadow(true));
+            emptyLayout.child(Components.label(Text.translatable(this.onlyFavorites ? "sypass.gui.empty.favorites.desc" : "sypass.gui.empty.desc")).shadow(true));
             container.child(emptyLayout);
+            return;
         }
+
+        boolean hasFavorites = entries.stream().anyMatch(e -> e.data().isFavorite());
+        boolean hasNonFavorites = entries.stream().anyMatch(e -> !e.data().isFavorite());
+
+        if (this.sortMode == SortMode.FAVORITES_FIRST && !this.onlyFavorites && hasFavorites && hasNonFavorites) {
+            boolean favHeaderAdded = false;
+            boolean otherHeaderAdded = false;
+
+            for (EntryItem entry : entries) {
+                if (entry.data().isFavorite()) {
+                    if (!favHeaderAdded) {
+                        container.child(createSectionHeader(Text.translatable("sypass.gui.section.favorites").formatted(Formatting.YELLOW, Formatting.BOLD)));
+                        favHeaderAdded = true;
+                    }
+                } else {
+                    if (!otherHeaderAdded) {
+                        container.child(createSectionHeader(Text.translatable("sypass.gui.section.other").formatted(Formatting.GRAY, Formatting.BOLD)));
+                        otherHeaderAdded = true;
+                    }
+                }
+                container.child(createPasswordCard(entry.serverIp(), entry.username(), entry.data()));
+            }
+        } else {
+            for (EntryItem entry : entries) {
+                container.child(createPasswordCard(entry.serverIp(), entry.username(), entry.data()));
+            }
+        }
+    }
+
+    private Component createSectionHeader(Text text) {
+        FlowLayout header = Containers.horizontalFlow(Sizing.fill(100), Sizing.fixed(16));
+        header.verticalAlignment(VerticalAlignment.CENTER);
+        header.margins(Insets.of(4, 2, 2, 2));
+        header.child(Components.label(text).shadow(true));
+        return header;
     }
 
     private Component createPasswordCard(String serverIp, String username, PasswordManager.AccountData data) {
@@ -311,14 +435,25 @@ public class SYPassScreen extends BaseOwoScreen<FlowLayout> {
         card.padding(Insets.of(6));
         card.margins(Insets.vertical(2));
 
+        // 1. Server icon (24x24) to the left of server name
+        int iconSize = 24;
+        int iconMargin = 6;
+        Identifier serverIconId = ServerIconManager.getServerIcon(serverIp);
+        TextureComponent iconComponent = Components.texture(serverIconId, 0, 0, 64, 64, 64, 64);
+        iconComponent.horizontalSizing(Sizing.fixed(iconSize));
+        iconComponent.verticalSizing(Sizing.fixed(iconSize));
+        iconComponent.margins(Insets.right(iconMargin));
+        card.child(iconComponent);
+
         boolean canDeleteFromBw = com.syntren.sypass.config.SYPassConfig.isBitwardenEnabled() && data.isSynced() && BitwardenManager.hasActiveSession();
-        int actionsWidth = canDeleteFromBw ? 122 : 96;
-        int infoWidth = contentWidth - actionsWidth - 15;
+        int actionsWidth = canDeleteFromBw ? 142 : 115;
+        int infoWidth = contentWidth - actionsWidth - iconSize - iconMargin - 15;
         FlowLayout infoLayout = Containers.verticalFlow(Sizing.fixed(infoWidth), Sizing.content());
         infoLayout.gap(2);
 
         FlowLayout topRow = Containers.horizontalFlow(Sizing.fill(100), Sizing.content());
         topRow.gap(4);
+        topRow.verticalAlignment(VerticalAlignment.CENTER);
 
         if (com.syntren.sypass.config.SYPassConfig.isBitwardenEnabled()) {
             LabelComponent cloudBadge = Components.label(Text.literal(data.isSynced() ? "§a☁" : "§7☁"));
@@ -326,7 +461,8 @@ public class SYPassScreen extends BaseOwoScreen<FlowLayout> {
             topRow.child(cloudBadge);
         }
 
-        topRow.child(Components.label(Text.literal(serverIp).formatted(Formatting.GOLD, Formatting.BOLD)).shadow(true));
+        String serverLabelText = (data.isFavorite() ? "§e★ " : "") + serverIp;
+        topRow.child(Components.label(Text.literal(serverLabelText).formatted(Formatting.GOLD, Formatting.BOLD)).shadow(true));
         infoLayout.child(topRow);
 
         FlowLayout userPassRow = Containers.horizontalFlow(Sizing.fill(100), Sizing.content());
@@ -348,8 +484,16 @@ public class SYPassScreen extends BaseOwoScreen<FlowLayout> {
         actionsLayout.gap(3);
         actionsLayout.horizontalAlignment(HorizontalAlignment.RIGHT);
 
+        ButtonComponent favBtn = Components.button(Text.literal(data.isFavorite() ? "§e★" : "§7☆"), b -> {
+            PasswordManager.toggleFavorite(serverIp, username);
+            refreshPasswordList();
+        });
+        favBtn.horizontalSizing(Sizing.fixed(20));
+        favBtn.tooltip(Text.translatable(data.isFavorite() ? "sypass.gui.button.unfavorite.tooltip" : "sypass.gui.button.favorite.tooltip"));
+
         ButtonComponent copyBtn = Components.button(Text.literal("📋"), b -> {
             if (this.client != null && this.client.keyboard != null) {
+                PasswordManager.updateLastUsed(serverIp, username);
                 this.client.keyboard.setClipboard(data.password());
                 setStatusMessage(Text.translatable("sypass.gui.status.copied", username).getString());
             }
@@ -383,6 +527,7 @@ public class SYPassScreen extends BaseOwoScreen<FlowLayout> {
         editBtn.horizontalSizing(Sizing.fixed(20));
         editBtn.tooltip(Text.translatable("sypass.gui.button.edit.tooltip"));
 
+        actionsLayout.child(favBtn);
         actionsLayout.child(copyBtn);
         actionsLayout.child(toggleEyeBtn);
         actionsLayout.child(editBtn);
@@ -1501,7 +1646,30 @@ public class SYPassScreen extends BaseOwoScreen<FlowLayout> {
                 backupPassField.setMaxLength(128);
                 backupPassField.setPlaceholder(Text.translatable("sypass.gui.settings.backup.pass_placeholder"));
                 backupPassField.tooltip(Text.translatable("sypass.gui.settings.backup.pass_tooltip"));
-                mainCard.child(backupPassField);
+                if (!this.exportAsCsv) {
+                    mainCard.child(backupPassField);
+                }
+
+                FlowLayout csvRow = Containers.horizontalFlow(Sizing.fill(100), Sizing.content());
+                csvRow.verticalAlignment(VerticalAlignment.CENTER);
+                csvRow.gap(4);
+                csvRow.margins(Insets.vertical(2));
+
+                CheckboxComponent csvCheckbox = Components.checkbox(Text.translatable("sypass.gui.settings.backup.csv_checkbox"));
+                csvCheckbox.checked(this.exportAsCsv);
+                csvCheckbox.onChanged(checked -> {
+                    this.exportAsCsv = checked;
+                    rebuildUI();
+                });
+                csvRow.child(csvCheckbox);
+                mainCard.child(csvRow);
+
+                if (this.exportAsCsv) {
+                    LabelComponent warning = Components.label(Text.translatable("sypass.gui.settings.backup.csv_warning").formatted(Formatting.YELLOW));
+                    warning.maxWidth(cardWidth - 20);
+                    warning.margins(Insets.bottom(2));
+                    mainCard.child(warning);
+                }
 
                 FlowLayout backupButtons = Containers.horizontalFlow(Sizing.fill(100), Sizing.fixed(20));
                 backupButtons.gap(4);
@@ -1510,24 +1678,38 @@ public class SYPassScreen extends BaseOwoScreen<FlowLayout> {
                 int backupBtnW = (cardWidth - 28) / 3;
 
                 ButtonComponent exportBtn = Components.button(Text.translatable("sypass.gui.settings.backup.export"), b -> {
-                    String pass = backupPassField.getText().trim();
-                    String name = PasswordManager.exportBackup(pass);
-                    if (name != null) {
-                        if (!pass.isEmpty()) {
-                            this.statusMessage = "§a" + Text.translatable("sypass.gui.settings.backup.exported_with_pass", name).getString();
+                    if (this.exportAsCsv) {
+                        String name = PasswordManager.exportBitwardenCsv();
+                        if (name != null) {
+                            this.statusMessage = "§e" + Text.translatable("sypass.gui.settings.backup.exported_csv", name).getString();
                         } else {
-                            this.statusMessage = "§e" + Text.translatable("sypass.gui.settings.backup.exported", name).getString();
+                            this.statusMessage = "§c" + Text.translatable("sypass.gui.settings.backup.export_failed").getString();
                         }
                     } else {
-                        this.statusMessage = "§c" + Text.translatable("sypass.gui.settings.backup.export_failed").getString();
+                        String pass = backupPassField.getText().trim();
+                        String name = PasswordManager.exportBackup(pass);
+                        if (name != null) {
+                            if (!pass.isEmpty()) {
+                                this.statusMessage = "§a" + Text.translatable("sypass.gui.settings.backup.exported_with_pass", name).getString();
+                            } else {
+                                this.statusMessage = "§e" + Text.translatable("sypass.gui.settings.backup.exported", name).getString();
+                            }
+                        } else {
+                            this.statusMessage = "§c" + Text.translatable("sypass.gui.settings.backup.export_failed").getString();
+                        }
                     }
                     rebuildUI();
                 });
                 exportBtn.horizontalSizing(Sizing.fixed(backupBtnW));
 
                 ButtonComponent importBtn = Components.button(Text.translatable("sypass.gui.settings.backup.import"), b -> {
-                    String pass = backupPassField.getText().trim();
-                    int res = PasswordManager.importLatestBackup(pass);
+                    int res;
+                    if (this.exportAsCsv) {
+                        res = PasswordManager.importLatestCsvBackup();
+                    } else {
+                        String pass = backupPassField.getText().trim();
+                        res = PasswordManager.importLatestBackup(pass);
+                    }
                     if (res >= 0) {
                         this.statusMessage = "§a" + Text.translatable("sypass.gui.settings.backup.imported", res).getString();
                         refreshPasswordList();

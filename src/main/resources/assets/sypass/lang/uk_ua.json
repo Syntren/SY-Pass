@@ -1,7 +1,7 @@
 {
   "modmenu.nameTranslation.sypass": "SY-Pass",
-  "modmenu.descriptionTranslation.sypass": "Зручний менеджер паролів для Minecraft із локальним зашифрованим сховищем та інтеграцією з офіційним Bitwarden CLI для автоматичного входу на сервери.",
-  "modmenu.summaryTranslation.sypass": "Внутрішньоігровий менеджер паролів із локальним AES-шифруванням та синхронізацією з Bitwarden.",
+  "modmenu.descriptionTranslation.sypass": "Безпечний менеджер паролів для Minecraft із локальним шифруванням AES-256-GCM, авто-входом та опціональною хмарною синхронізацією через офіційний Bitwarden CLI.",
+  "modmenu.summaryTranslation.sypass": "Внутрішньоігровий менеджер паролів з авто-входом та опціональною синхронізацією з Bitwarden.",
   "key.sypass.open_gui": "Відкрити SY-Pass",
   "key.sypass.quick_login": "Швидкий повторний вхід",
   "key.sypass.quick_register": "Швидка реєстрація",

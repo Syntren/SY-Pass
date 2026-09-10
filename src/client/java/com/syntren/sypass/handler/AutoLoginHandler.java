@@ -23,6 +23,8 @@ public class AutoLoginHandler {
     // Session control to prevent spam across subserver/lobby transfers
     private static String activeServerAddress = null;
     private static boolean hasLoggedInThisSession = false;
+    private static long connectionTimeMs = 0L;
+    private static boolean sessionScanningActive = false;
 
     // Smart authentication state & cooldowns
     private static long lastLoginAttemptMs = 0;
@@ -60,6 +62,8 @@ public class AutoLoginHandler {
 
             activeServerAddress = normServerIp;
             hasLoggedInThisSession = false;
+            connectionTimeMs = System.currentTimeMillis();
+            sessionScanningActive = true;
             loginAttemptsThisSession = 0;
             registerAttemptsThisSession = 0;
             hasPromptedRegisterToast = false;
@@ -87,6 +91,8 @@ public class AutoLoginHandler {
         ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> {
             activeServerAddress = null;
             hasLoggedInThisSession = false;
+            connectionTimeMs = 0L;
+            sessionScanningActive = false;
             pendingEntry = null;
             ticksToWait = -1;
             loginAttemptsThisSession = 0;
@@ -126,10 +132,14 @@ public class AutoLoginHandler {
     }
 
     private static void handleIncomingMessage(String rawText) {
-        if (rawText == null || rawText.isBlank()) return;
+        if (!sessionScanningActive || rawText == null || rawText.isBlank()) return;
 
-        // Оптимізація 1: Якщо гравець вже авторизувався в цій сесії, сканування чату вимикається повністю
-        if (hasLoggedInThisSession) return;
+        long now = System.currentTimeMillis();
+        // Якщо минуло понад 25 секунд з моменту входу на сервер — вимикаємо сканування для решти сесії
+        if (now - connectionTimeMs > 25000) {
+            sessionScanningActive = false;
+            return;
+        }
 
         MinecraftClient client = MinecraftClient.getInstance();
         if (client == null || client.player == null) return;
@@ -137,25 +147,32 @@ public class AutoLoginHandler {
         ServerInfo server = client.getCurrentServerEntry();
         if (server == null) return;
 
-        // Оптимізація 2: Швидкий евристичний фільтр без створення об'єктів.
-        // Будь-який промпт сервера містить команду або двокрапку запиту.
+        // Швидкий безоб'єктний пре-фільтр: промпти завжди містять '/' або ':'
         if (rawText.indexOf('/') == -1 && rawText.indexOf(':') == -1) {
+            return;
+        }
+
+        // Швидка перевірка ключових слів без створення Matcher чи чищення кольорів
+        String lowerRaw = rawText.toLowerCase(java.util.Locale.ROOT);
+        boolean mightBeLogin = lowerRaw.contains("login") || lowerRaw.contains("/l") || lowerRaw.contains("auth") || lowerRaw.contains("парол") || lowerRaw.contains("увійдіть") || lowerRaw.contains("войдите");
+        boolean mightBeRegister = lowerRaw.contains("reg");
+
+        if (!mightBeLogin && !mightBeRegister) {
             return;
         }
 
         String currentServerIp = server.address;
         String username = client.getSession().getUsername();
 
-        // Оптимізація 3: Видалення кольорів тільки якщо рядок дійсно містить знак секції '§'
+        // Очищення кольорів лише у випадку, якщо рядок містить знак '§'
         String cleanText = (rawText.indexOf('§') >= 0)
                 ? STRIP_COLOR_PATTERN.matcher(rawText).replaceAll("").trim()
                 : rawText.trim();
-        long now = System.currentTimeMillis();
 
         boolean hasSavedAccount = PasswordManager.hasPassword(currentServerIp, username);
 
         // Case 1: Account exists -> Smart Auto-Login (only if not already logged in this session)
-        if (hasSavedAccount && SYPassConfig.isAutoLoginEnabled() && SYPassConfig.isSmartAutoLoginEnabled() && !hasLoggedInThisSession) {
+        if (mightBeLogin && hasSavedAccount && SYPassConfig.isAutoLoginEnabled() && SYPassConfig.isSmartAutoLoginEnabled() && !hasLoggedInThisSession) {
             if (LOGIN_PROMPT_PATTERN.matcher(cleanText).find()) {
                 if (now - lastLoginAttemptMs > 4000 && loginAttemptsThisSession < 3) {
                     lastLoginAttemptMs = now;
@@ -174,7 +191,7 @@ public class AutoLoginHandler {
         }
 
         // Case 2: No account exists -> Smart Auto-Register or Prompt Toast
-        if (!hasSavedAccount && SYPassConfig.isAutoLoginEnabled()) {
+        if (mightBeRegister && !hasSavedAccount && SYPassConfig.isAutoLoginEnabled()) {
             if (REGISTER_PROMPT_PATTERN.matcher(cleanText).find()) {
                 if (SYPassConfig.isSmartAutoRegisterEnabled()) {
                     if (now - lastRegisterAttemptMs > 5000 && registerAttemptsThisSession < 2) {
@@ -230,6 +247,7 @@ public class AutoLoginHandler {
         }
         lastLoginAttemptMs = System.currentTimeMillis();
         hasLoggedInThisSession = true;
+        sessionScanningActive = false;
     }
 
     /**
@@ -272,6 +290,7 @@ public class AutoLoginHandler {
             );
             PasswordManager.updateLastUsed(server.address, username);
             hasLoggedInThisSession = true;
+            sessionScanningActive = false;
         } else {
             SYPassToast.show(
                     Text.translatable("sypass.toast.quicklogin.title"),
@@ -341,6 +360,7 @@ public class AutoLoginHandler {
         );
 
         hasLoggedInThisSession = true;
+        sessionScanningActive = false;
         return true;
     }
 }

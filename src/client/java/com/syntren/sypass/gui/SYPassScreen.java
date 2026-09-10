@@ -15,6 +15,7 @@ import io.wispforest.owo.ui.container.ScrollContainer;
 import io.wispforest.owo.ui.core.*;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
+import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.screen.ConfirmLinkScreen;
 import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.text.OrderedText;
@@ -459,9 +460,13 @@ public class SYPassScreen extends BaseOwoScreen<FlowLayout> {
         String key = serverIp + ":::" + username;
         int contentWidth = Math.min(460, this.width - 30);
 
+        MinecraftClient mc = this.client != null ? this.client : MinecraftClient.getInstance();
+        String currentClientUser = (mc != null && mc.getSession() != null) ? mc.getSession().getUsername() : null;
+        boolean isActiveAccount = currentClientUser != null && currentClientUser.equalsIgnoreCase(username);
+
         FlowLayout card = Containers.horizontalFlow(Sizing.fill(100), Sizing.content());
         card.verticalAlignment(VerticalAlignment.CENTER);
-        card.surface(Surface.PANEL);
+        card.surface(isActiveAccount ? Surface.PANEL.and(Surface.outline(0x8855FF55)) : Surface.PANEL);
         card.padding(Insets.of(6));
         card.margins(Insets.vertical(2));
 
@@ -496,8 +501,17 @@ public class SYPassScreen extends BaseOwoScreen<FlowLayout> {
         infoLayout.child(topRow);
 
         FlowLayout userPassRow = Containers.horizontalFlow(Sizing.fill(100), Sizing.content());
-        userPassRow.gap(8);
-        userPassRow.child(Components.label(Text.literal(username).formatted(Formatting.YELLOW)).shadow(true));
+        userPassRow.gap(6);
+        userPassRow.verticalAlignment(VerticalAlignment.CENTER);
+
+        if (isActiveAccount) {
+            userPassRow.child(Components.label(Text.literal(username).formatted(Formatting.GREEN, Formatting.BOLD)).shadow(true));
+            LabelComponent activeBadge = Components.label(Text.literal("§a✔ " + Text.translatable("sypass.gui.account.active").getString())).shadow(true);
+            activeBadge.tooltip(Text.translatable("sypass.gui.account.active.tooltip"));
+            userPassRow.child(activeBadge);
+        } else {
+            userPassRow.child(Components.label(Text.literal(username).formatted(Formatting.YELLOW)).shadow(true));
+        }
 
         boolean isRevealed = revealedPasswords.contains(key);
         LabelComponent passLabel = Components.label(Text.literal(isRevealed ? data.password() : "••••••••"));

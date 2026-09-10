@@ -35,6 +35,8 @@
   "sypass.gui.filter.all.tooltip": "Show all servers",
   "sypass.gui.section.favorites": "★ Favorite Servers",
   "sypass.gui.section.other": "Other Servers",
+  "sypass.gui.account.active": "Active",
+  "sypass.gui.account.active.tooltip": "Matches current logged-in Minecraft account",
   "sypass.gui.sync.badge.synced": "Synced with Bitwarden",
   "sypass.gui.sync.badge.local": "Local only",
   "sypass.gui.sync.toggle": "Sync with Bitwarden",

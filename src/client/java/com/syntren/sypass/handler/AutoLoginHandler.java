@@ -128,15 +128,28 @@ public class AutoLoginHandler {
     private static void handleIncomingMessage(String rawText) {
         if (rawText == null || rawText.isBlank()) return;
 
+        // Оптимізація 1: Якщо гравець вже авторизувався в цій сесії, сканування чату вимикається повністю
+        if (hasLoggedInThisSession) return;
+
         MinecraftClient client = MinecraftClient.getInstance();
         if (client == null || client.player == null) return;
 
         ServerInfo server = client.getCurrentServerEntry();
         if (server == null) return;
 
+        // Оптимізація 2: Швидкий евристичний фільтр без створення об'єктів.
+        // Будь-який промпт сервера містить команду або двокрапку запиту.
+        if (rawText.indexOf('/') == -1 && rawText.indexOf(':') == -1) {
+            return;
+        }
+
         String currentServerIp = server.address;
         String username = client.getSession().getUsername();
-        String cleanText = STRIP_COLOR_PATTERN.matcher(rawText).replaceAll("").trim();
+
+        // Оптимізація 3: Видалення кольорів тільки якщо рядок дійсно містить знак секції '§'
+        String cleanText = (rawText.indexOf('§') >= 0)
+                ? STRIP_COLOR_PATTERN.matcher(rawText).replaceAll("").trim()
+                : rawText.trim();
         long now = System.currentTimeMillis();
 
         boolean hasSavedAccount = PasswordManager.hasPassword(currentServerIp, username);

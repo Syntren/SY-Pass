@@ -35,7 +35,7 @@ public class SYPassClient implements ClientModInitializer {
 		ClientLifecycleEvents.CLIENT_STOPPING.register(client -> ServerIconManager.clearCache());
 
 		ClientSendMessageEvents.ALLOW_CHAT.register(message -> {
-			if (!SYPassConfig.isChatLeakProtectionEnabled()) {
+			if (!SYPassConfig.isChatLeakProtectionEnabled() || message == null || message.isEmpty()) {
 				return true;
 			}
 			MinecraftClient client = MinecraftClient.getInstance();
@@ -44,14 +44,17 @@ public class SYPassClient implements ClientModInitializer {
 			ServerInfo server = client.getCurrentServerEntry();
 			if (server == null || server.address == null || server.address.isBlank()) return true;
 
-			String normServer = PasswordManager.normalizeServerAddress(server.address);
-			Map<String, PasswordManager.AccountData> accounts = PasswordManager.getAllData().get(normServer);
-			if (accounts == null || accounts.isEmpty()) return true;
+			Map<String, PasswordManager.AccountData> accounts = PasswordManager.getServerAccounts(server.address);
+			if (accounts.isEmpty()) return true;
 
+			int msgLen = message.length();
 			for (PasswordManager.AccountData acc : accounts.values()) {
 				String pass = acc.password();
 				if (pass != null && !pass.isBlank()) {
-					boolean leaks = pass.length() >= 3 ? message.contains(pass) : message.trim().equals(pass);
+					int passLen = pass.length();
+					if (msgLen < passLen) continue; // Швидка евристика: якщо повідомлення коротше за пароль, перевірка пропускається
+
+					boolean leaks = passLen >= 3 ? message.contains(pass) : message.trim().equals(pass);
 					if (leaks) {
 						client.player.sendMessage(
 								Text.translatable("sypass.chat.blocked_leak").formatted(Formatting.RED),

@@ -35,34 +35,30 @@ public class SYPassClient implements ClientModInitializer {
 		ClientLifecycleEvents.CLIENT_STOPPING.register(client -> ServerIconManager.clearCache());
 
 		ClientSendMessageEvents.ALLOW_CHAT.register(message -> {
-			if (!SYPassConfig.isChatLeakProtectionEnabled() || message == null || message.isEmpty()) {
+			if (!SYPassConfig.isChatLeakProtectionEnabled() || message == null || message.isBlank()) {
 				return true;
 			}
 			MinecraftClient client = MinecraftClient.getInstance();
 			if (client == null || client.player == null) return true;
 
 			ServerInfo server = client.getCurrentServerEntry();
-			if (server == null || server.address == null || server.address.isBlank()) return true;
+			String serverAddress = (server != null) ? server.address : "";
 
-			Map<String, PasswordManager.AccountData> accounts = PasswordManager.getServerAccounts(server.address);
-			if (accounts.isEmpty()) return true;
+			boolean leaks = com.syntren.sypass.util.ChatProtectionMatcher.checkMessageLeaks(
+					message,
+					serverAddress,
+					SYPassConfig.getChatProtectionScope()
+			);
 
-			int msgLen = message.length();
-			for (PasswordManager.AccountData acc : accounts.values()) {
-				String pass = acc.password();
-				if (pass != null && !pass.isBlank()) {
-					int passLen = pass.length();
-					if (msgLen < passLen) continue; // Швидка евристика: якщо повідомлення коротше за пароль, перевірка пропускається
-
-					boolean leaks = passLen >= 3 ? message.contains(pass) : message.trim().equals(pass);
-					if (leaks) {
-						client.player.sendMessage(
-								Text.translatable("sypass.chat.blocked_leak").formatted(Formatting.RED),
-								false
-						);
-						return false;
-					}
-				}
+			if (leaks) {
+				String msgKey = (SYPassConfig.getChatProtectionScope() == SYPassConfig.ChatProtectionScope.ALL_SERVERS)
+						? "sypass.chat.blocked_leak_all"
+						: "sypass.chat.blocked_leak";
+				client.player.sendMessage(
+						Text.translatable(msgKey).formatted(Formatting.RED),
+						false
+				);
+				return false;
 			}
 
 			return true;

@@ -345,6 +345,7 @@ public class PasswordManager {
             }
             String jsonOutput = GSON.toJson(wrapper);
             writeSecureFile(CONFIG_FILE, jsonOutput.getBytes(StandardCharsets.UTF_8));
+            com.syntren.sypass.util.ChatProtectionMatcher.invalidateCache();
         } catch (Exception e) {
             e.printStackTrace();
         }
@@ -393,6 +394,7 @@ public class PasswordManager {
                 } else {
                     enforceSecurePermissions(file.toPath());
                 }
+                com.syntren.sypass.util.ChatProtectionMatcher.invalidateCache();
             }
         } catch (Exception e) {
             e.printStackTrace();

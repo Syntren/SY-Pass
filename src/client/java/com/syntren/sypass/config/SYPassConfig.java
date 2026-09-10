@@ -17,6 +17,21 @@ public class SYPassConfig {
 
     private static ConfigData data = new ConfigData();
 
+    public enum ChatProtectionScope {
+        ALL_SERVERS("sypass.gui.settings.chat_scope.all"),
+        CURRENT_SERVER("sypass.gui.settings.chat_scope.current");
+
+        private final String translationKey;
+
+        ChatProtectionScope(String translationKey) {
+            this.translationKey = translationKey;
+        }
+
+        public String getTranslationKey() {
+            return translationKey;
+        }
+    }
+
     public static class ConfigData {
         public boolean enableBitwarden = false;
         public boolean autoLogin = true;
@@ -28,6 +43,7 @@ public class SYPassConfig {
         public boolean smartAutoRegister = false;
         public boolean preventRegisterOverwrite = true;
         public boolean chatLeakProtection = false;
+        public ChatProtectionScope chatProtectionScope = ChatProtectionScope.ALL_SERVERS;
         public int defaultPasswordLength = 16;
     }
 
@@ -143,6 +159,18 @@ public class SYPassConfig {
 
     public static void setChatLeakProtectionEnabled(boolean enabled) {
         data.chatLeakProtection = enabled;
+        save();
+    }
+
+    public static ChatProtectionScope getChatProtectionScope() {
+        if (data.chatProtectionScope == null) {
+            data.chatProtectionScope = ChatProtectionScope.ALL_SERVERS;
+        }
+        return data.chatProtectionScope;
+    }
+
+    public static void setChatProtectionScope(ChatProtectionScope scope) {
+        data.chatProtectionScope = (scope != null) ? scope : ChatProtectionScope.ALL_SERVERS;
         save();
     }
 

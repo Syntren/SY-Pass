@@ -1,5 +1,6 @@
 package com.syntren.sypass.gui;
 
+import com.syntren.sypass.config.SYPassConfig;
 import com.syntren.sypass.storage.BitwardenManager;
 import com.syntren.sypass.storage.PasswordManager;
 import io.wispforest.owo.ui.base.BaseOwoScreen;
@@ -1487,7 +1488,7 @@ public class SYPassScreen extends BaseOwoScreen<FlowLayout> {
                         b -> {
                             boolean newVal = !com.syntren.sypass.config.SYPassConfig.isChatLeakProtectionEnabled();
                             com.syntren.sypass.config.SYPassConfig.setChatLeakProtectionEnabled(newVal);
-                            b.setMessage(Text.translatable("sypass.gui.settings.chat_protect", newVal ? "§a" + Text.translatable("sypass.gui.settings.on").getString() : "§c" + Text.translatable("sypass.gui.settings.off").getString()));
+                            rebuildUI();
                         }
                 );
                 chatProtectToggle.horizontalSizing(Sizing.fixed(colWidth));
@@ -1496,6 +1497,28 @@ public class SYPassScreen extends BaseOwoScreen<FlowLayout> {
                 row3.child(protectOverwriteToggle);
                 row3.child(chatProtectToggle);
                 mainCard.child(row3);
+
+                // Підналаштування області валідації (відображається, коли захист увімкнено)
+                if (chatProtect) {
+                    FlowLayout scopeRow = Containers.horizontalFlow(Sizing.fill(100), Sizing.fixed(20));
+                    scopeRow.horizontalAlignment(HorizontalAlignment.CENTER);
+
+                    SYPassConfig.ChatProtectionScope scope = com.syntren.sypass.config.SYPassConfig.getChatProtectionScope();
+                    ButtonComponent scopeToggle = Components.button(
+                            Text.translatable("sypass.gui.settings.chat_scope", Text.translatable(scope.getTranslationKey())),
+                            b -> {
+                                SYPassConfig.ChatProtectionScope newScope = (scope == SYPassConfig.ChatProtectionScope.ALL_SERVERS)
+                                        ? SYPassConfig.ChatProtectionScope.CURRENT_SERVER
+                                        : SYPassConfig.ChatProtectionScope.ALL_SERVERS;
+                                com.syntren.sypass.config.SYPassConfig.setChatProtectionScope(newScope);
+                                rebuildUI();
+                            }
+                    );
+                    scopeToggle.horizontalSizing(Sizing.fill(100));
+                    scopeToggle.tooltip(Text.translatable("sypass.gui.settings.chat_scope.tooltip"));
+                    scopeRow.child(scopeToggle);
+                    mainCard.child(scopeRow);
+                }
 
                 // Рядок 4: Затримка авто-входу (ліворуч) та Швидкі утиліти (праворуч)
                 FlowLayout row4 = Containers.horizontalFlow(Sizing.fill(100), Sizing.content());

@@ -197,7 +197,7 @@ public class AutoLoginHandler {
                     if (now - lastRegisterAttemptMs > 5000 && registerAttemptsThisSession < 2) {
                         lastRegisterAttemptMs = now;
                         registerAttemptsThisSession++;
-                        executeQuickRegister(client, 16, true);
+                        executeQuickRegister(client, SYPassConfig.getDefaultPasswordLength(), true);
                     }
                 } else {
                     if (!hasPromptedRegisterToast && now - lastRegisterAttemptMs > 10000) {
@@ -303,6 +303,10 @@ public class AutoLoginHandler {
     /**
      * Quick register with generated password, auto-save, clipboard copy, and Bitwarden sync
      */
+    public static boolean executeQuickRegister(MinecraftClient client) {
+        return executeQuickRegister(client, SYPassConfig.getDefaultPasswordLength(), false);
+    }
+
     public static boolean executeQuickRegister(MinecraftClient client, int length) {
         return executeQuickRegister(client, length, false);
     }

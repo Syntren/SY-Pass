@@ -99,7 +99,7 @@ public class SYPassClient implements ClientModInitializer {
 				AutoLoginHandler.executeManualLogin(client);
 			}
 			while (quickRegisterKeyBinding.wasPressed()) {
-				AutoLoginHandler.executeQuickRegister(client, 16);
+				AutoLoginHandler.executeQuickRegister(client);
 			}
 		});
 	}

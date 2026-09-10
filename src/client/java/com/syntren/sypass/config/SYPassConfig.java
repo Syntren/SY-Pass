@@ -28,6 +28,7 @@ public class SYPassConfig {
         public boolean smartAutoRegister = false;
         public boolean preventRegisterOverwrite = true;
         public boolean chatLeakProtection = false;
+        public int defaultPasswordLength = 16;
     }
 
     public static void load() {
@@ -142,6 +143,18 @@ public class SYPassConfig {
 
     public static void setChatLeakProtectionEnabled(boolean enabled) {
         data.chatLeakProtection = enabled;
+        save();
+    }
+
+    public static int getDefaultPasswordLength() {
+        if (data.defaultPasswordLength < 6 || data.defaultPasswordLength > 64) {
+            data.defaultPasswordLength = 16;
+        }
+        return data.defaultPasswordLength;
+    }
+
+    public static void setDefaultPasswordLength(int length) {
+        data.defaultPasswordLength = Math.max(6, Math.min(64, length));
         save();
     }
 

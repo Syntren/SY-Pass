@@ -37,6 +37,6 @@ public class PasswordGenerator {
     }
 
     public static String generateDefault() {
-        return generate(16);
+        return generate(com.syntren.sypass.config.SYPassConfig.getDefaultPasswordLength());
     }
 }

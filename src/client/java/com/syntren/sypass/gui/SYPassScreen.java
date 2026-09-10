@@ -1556,31 +1556,55 @@ public class SYPassScreen extends BaseOwoScreen<FlowLayout> {
                 delayButtons.child(plus10);
                 delayCol.child(delayButtons);
 
-                // Колонка праворуч: Генератор пароля + Відкрити папку
-                FlowLayout rightCol = Containers.verticalFlow(Sizing.fixed(colWidth), Sizing.content());
-                rightCol.gap(2);
+                // Колонка довжини пароля
+                FlowLayout passLenCol = Containers.verticalFlow(Sizing.fixed(colWidth), Sizing.content());
+                passLenCol.gap(2);
 
-                ButtonComponent quickGenBtn = Components.button(Text.translatable("sypass.gui.settings.quick_gen"), b -> {
-                    String gen = com.syntren.sypass.util.PasswordGenerator.generateDefault();
-                    if (this.client != null && this.client.keyboard != null) {
-                        this.client.keyboard.setClipboard(gen);
-                    }
-                    this.statusMessage = Text.translatable("sypass.gui.settings.copied_gen", gen).getString();
-                    rebuildUI();
+                int curLen = com.syntren.sypass.config.SYPassConfig.getDefaultPasswordLength();
+                LabelComponent passLenLabel = Components.label(Text.translatable("sypass.gui.settings.pass_len", curLen));
+                passLenLabel.shadow(true);
+                passLenCol.child(passLenLabel);
+
+                FlowLayout lenButtons = Containers.horizontalFlow(Sizing.fill(100), Sizing.fixed(20));
+                lenButtons.gap(2);
+                int lBtnW = (colWidth - 6) / 4;
+
+                ButtonComponent minus4 = Components.button(Text.literal("-4"), b -> {
+                    int updated = Math.max(6, com.syntren.sypass.config.SYPassConfig.getDefaultPasswordLength() - 4);
+                    com.syntren.sypass.config.SYPassConfig.setDefaultPasswordLength(updated);
+                    passLenLabel.text(Text.translatable("sypass.gui.settings.pass_len", updated));
                 });
-                quickGenBtn.horizontalSizing(Sizing.fill(100));
+                minus4.horizontalSizing(Sizing.fixed(lBtnW));
 
-                ButtonComponent openFolderBtn = Components.button(Text.translatable("sypass.gui.bw.button.open_folder"), b -> {
-                    Util.getOperatingSystem().open(BitwardenManager.CONFIG_DIR.toFile());
+                ButtonComponent minus1 = Components.button(Text.literal("-1"), b -> {
+                    int updated = Math.max(6, com.syntren.sypass.config.SYPassConfig.getDefaultPasswordLength() - 1);
+                    com.syntren.sypass.config.SYPassConfig.setDefaultPasswordLength(updated);
+                    passLenLabel.text(Text.translatable("sypass.gui.settings.pass_len", updated));
                 });
-                openFolderBtn.horizontalSizing(Sizing.fill(100));
-                openFolderBtn.tooltip(Text.translatable("sypass.gui.bw.button.open_folder.tooltip"));
+                minus1.horizontalSizing(Sizing.fixed(lBtnW));
 
-                rightCol.child(quickGenBtn);
-                rightCol.child(openFolderBtn);
+                ButtonComponent plus1 = Components.button(Text.literal("+1"), b -> {
+                    int updated = Math.min(64, com.syntren.sypass.config.SYPassConfig.getDefaultPasswordLength() + 1);
+                    com.syntren.sypass.config.SYPassConfig.setDefaultPasswordLength(updated);
+                    passLenLabel.text(Text.translatable("sypass.gui.settings.pass_len", updated));
+                });
+                plus1.horizontalSizing(Sizing.fixed(lBtnW));
+
+                ButtonComponent plus4 = Components.button(Text.literal("+4"), b -> {
+                    int updated = Math.min(64, com.syntren.sypass.config.SYPassConfig.getDefaultPasswordLength() + 4);
+                    com.syntren.sypass.config.SYPassConfig.setDefaultPasswordLength(updated);
+                    passLenLabel.text(Text.translatable("sypass.gui.settings.pass_len", updated));
+                });
+                plus4.horizontalSizing(Sizing.fixed(lBtnW));
+
+                lenButtons.child(minus4);
+                lenButtons.child(minus1);
+                lenButtons.child(plus1);
+                lenButtons.child(plus4);
+                passLenCol.child(lenButtons);
 
                 row4.child(delayCol);
-                row4.child(rightCol);
+                row4.child(passLenCol);
                 mainCard.child(row4);
 
                 // Рядок 5: Підменю (Резервні копії ліворуч, Bitwarden праворуч)
@@ -1616,6 +1640,15 @@ public class SYPassScreen extends BaseOwoScreen<FlowLayout> {
                 row5.child(backupMenuBtn);
                 row5.child(bwMenuBtn);
                 mainCard.child(row5);
+
+                // Відкрити папку config/sypass
+                ButtonComponent openFolderBtn = Components.button(Text.translatable("sypass.gui.bw.button.open_folder"), b -> {
+                    Util.getOperatingSystem().open(BitwardenManager.CONFIG_DIR.toFile());
+                });
+                openFolderBtn.horizontalSizing(Sizing.fill(100));
+                openFolderBtn.tooltip(Text.translatable("sypass.gui.bw.button.open_folder.tooltip"));
+                openFolderBtn.margins(Insets.top(2));
+                mainCard.child(openFolderBtn);
             }
             case BITWARDEN -> {
                 mainCard.child(Components.label(Text.translatable("sypass.gui.settings.bw.title").formatted(Formatting.GOLD, Formatting.BOLD)).shadow(true).margins(Insets.bottom(2)));

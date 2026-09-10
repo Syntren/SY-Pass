@@ -112,9 +112,12 @@ public class EditPasswordScreen extends BaseOwoScreen<FlowLayout> {
                 .horizontalSizing(Sizing.fill(100)));
 
         FlowLayout passRow = Containers.horizontalFlow(Sizing.fill(100), Sizing.fixed(20));
-        passRow.gap(4);
+        passRow.gap(3);
+        passRow.verticalAlignment(VerticalAlignment.CENTER);
 
-        this.passwordField = Components.textBox(Sizing.fixed(cardWidth - 84));
+        int buttonsWidth = 110;
+        int passFieldWidth = cardWidth - 24 - buttonsWidth - 6;
+        this.passwordField = Components.textBox(Sizing.fixed(passFieldWidth));
         this.passwordField.setMaxLength(256);
         this.passwordField.setText(initialPassword);
         this.passwordField.setCursor(0, false);
@@ -127,11 +130,53 @@ public class EditPasswordScreen extends BaseOwoScreen<FlowLayout> {
             b.tooltip(Text.translatable(showPassword ? "sypass.gui.button.hide" : "sypass.gui.button.show"));
             applyPasswordMask(this.passwordField, showPassword);
         });
-        togglePassBtn.horizontalSizing(Sizing.fixed(25));
+        togglePassBtn.horizontalSizing(Sizing.fixed(22));
         togglePassBtn.tooltip(Text.translatable(showPassword ? "sypass.gui.button.hide" : "sypass.gui.button.show"));
 
+        int initialLen = com.syntren.sypass.config.SYPassConfig.getDefaultPasswordLength();
+        final int[] genLen = new int[]{ initialLen };
+
+        ButtonComponent lenBtn = Components.button(Text.literal(String.valueOf(genLen[0])), b -> {
+            int cur = genLen[0];
+            int next = switch (cur) {
+                case 8 -> 12;
+                case 12 -> 16;
+                case 16 -> 20;
+                case 20 -> 24;
+                case 24 -> 32;
+                case 32 -> 8;
+                default -> 16;
+            };
+            genLen[0] = next;
+            com.syntren.sypass.config.SYPassConfig.setDefaultPasswordLength(next);
+            b.setMessage(Text.literal(String.valueOf(next)));
+            b.tooltip(Text.translatable("sypass.gui.edit.length.tooltip", next));
+        });
+        lenBtn.horizontalSizing(Sizing.fixed(24));
+        lenBtn.tooltip(Text.translatable("sypass.gui.edit.length.tooltip", genLen[0]));
+
+        ButtonComponent lenMinusBtn = Components.button(Text.literal("-"), b -> {
+            int updated = Math.max(6, genLen[0] - 1);
+            genLen[0] = updated;
+            com.syntren.sypass.config.SYPassConfig.setDefaultPasswordLength(updated);
+            lenBtn.setMessage(Text.literal(String.valueOf(updated)));
+            lenBtn.tooltip(Text.translatable("sypass.gui.edit.length.tooltip", updated));
+        });
+        lenMinusBtn.horizontalSizing(Sizing.fixed(16));
+        lenMinusBtn.tooltip(Text.translatable("sypass.gui.edit.length.minus.tooltip"));
+
+        ButtonComponent lenPlusBtn = Components.button(Text.literal("+"), b -> {
+            int updated = Math.min(64, genLen[0] + 1);
+            genLen[0] = updated;
+            com.syntren.sypass.config.SYPassConfig.setDefaultPasswordLength(updated);
+            lenBtn.setMessage(Text.literal(String.valueOf(updated)));
+            lenBtn.tooltip(Text.translatable("sypass.gui.edit.length.tooltip", updated));
+        });
+        lenPlusBtn.horizontalSizing(Sizing.fixed(16));
+        lenPlusBtn.tooltip(Text.translatable("sypass.gui.edit.length.plus.tooltip"));
+
         ButtonComponent generateBtn = Components.button(Text.literal("🎲"), b -> {
-            String gen = com.syntren.sypass.util.PasswordGenerator.generateDefault();
+            String gen = com.syntren.sypass.util.PasswordGenerator.generate(genLen[0]);
             this.passwordField.setText(gen);
             if (this.client != null && this.client.keyboard != null) {
                 this.client.keyboard.setClipboard(gen);
@@ -139,12 +184,15 @@ public class EditPasswordScreen extends BaseOwoScreen<FlowLayout> {
             this.errorLabel.color(Color.ofRgb(0x55FF55));
             this.errorLabel.text(Text.translatable("sypass.gui.edit.generated_copied"));
         });
-        generateBtn.horizontalSizing(Sizing.fixed(25));
+        generateBtn.horizontalSizing(Sizing.fixed(22));
         generateBtn.tooltip(Text.translatable("sypass.gui.button.generate.tooltip"));
 
         passRow.child(this.passwordField);
         passRow.child(togglePassBtn);
         passRow.child(generateBtn);
+        passRow.child(lenMinusBtn);
+        passRow.child(lenBtn);
+        passRow.child(lenPlusBtn);
         card.child(passRow);
 
         // 4. Команда

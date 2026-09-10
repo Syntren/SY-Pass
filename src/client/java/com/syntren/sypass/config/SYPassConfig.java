@@ -43,7 +43,7 @@ public class SYPassConfig {
         public boolean smartAutoRegister = false;
         public boolean preventRegisterOverwrite = true;
         public boolean chatLeakProtection = false;
-        public ChatProtectionScope chatProtectionScope = ChatProtectionScope.ALL_SERVERS;
+        public ChatProtectionScope chatProtectionScope = ChatProtectionScope.CURRENT_SERVER;
         public int defaultPasswordLength = 16;
     }
 
@@ -164,13 +164,13 @@ public class SYPassConfig {
 
     public static ChatProtectionScope getChatProtectionScope() {
         if (data.chatProtectionScope == null) {
-            data.chatProtectionScope = ChatProtectionScope.ALL_SERVERS;
+            data.chatProtectionScope = ChatProtectionScope.CURRENT_SERVER;
         }
         return data.chatProtectionScope;
     }
 
     public static void setChatProtectionScope(ChatProtectionScope scope) {
-        data.chatProtectionScope = (scope != null) ? scope : ChatProtectionScope.ALL_SERVERS;
+        data.chatProtectionScope = (scope != null) ? scope : ChatProtectionScope.CURRENT_SERVER;
         save();
     }
 

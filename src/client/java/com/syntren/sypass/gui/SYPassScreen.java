@@ -60,6 +60,7 @@ public class SYPassScreen extends BaseOwoScreen<FlowLayout> {
 
     private enum SettingsStage {
         MAIN,
+        CHAT_PROTECTION,
         BACKUP,
         BITWARDEN
     }
@@ -1483,42 +1484,22 @@ public class SYPassScreen extends BaseOwoScreen<FlowLayout> {
                 protectOverwriteToggle.tooltip(Text.translatable("sypass.gui.settings.prevent_overwrite.tooltip"));
 
                 boolean chatProtect = com.syntren.sypass.config.SYPassConfig.isChatLeakProtectionEnabled();
-                ButtonComponent chatProtectToggle = Components.button(
-                        Text.translatable("sypass.gui.settings.chat_protect", chatProtect ? "§a" + Text.translatable("sypass.gui.settings.on").getString() : "§c" + Text.translatable("sypass.gui.settings.off").getString()),
+                Text chatStatus = chatProtect
+                        ? Text.translatable("sypass.gui.settings.on").formatted(Formatting.GREEN)
+                        : Text.translatable("sypass.gui.settings.off").formatted(Formatting.GRAY);
+                ButtonComponent chatMenuBtn = Components.button(
+                        Text.translatable("sypass.gui.settings.chat_protect.menu_btn", chatStatus),
                         b -> {
-                            boolean newVal = !com.syntren.sypass.config.SYPassConfig.isChatLeakProtectionEnabled();
-                            com.syntren.sypass.config.SYPassConfig.setChatLeakProtectionEnabled(newVal);
+                            settingsStage = SettingsStage.CHAT_PROTECTION;
                             rebuildUI();
                         }
                 );
-                chatProtectToggle.horizontalSizing(Sizing.fixed(colWidth));
-                chatProtectToggle.tooltip(Text.translatable("sypass.gui.settings.chat_protect.tooltip"));
+                chatMenuBtn.horizontalSizing(Sizing.fixed(colWidth));
+                chatMenuBtn.tooltip(Text.translatable("sypass.gui.settings.chat_protect.tooltip"));
 
                 row3.child(protectOverwriteToggle);
-                row3.child(chatProtectToggle);
+                row3.child(chatMenuBtn);
                 mainCard.child(row3);
-
-                // Підналаштування області валідації (відображається, коли захист увімкнено)
-                if (chatProtect) {
-                    FlowLayout scopeRow = Containers.horizontalFlow(Sizing.fill(100), Sizing.fixed(20));
-                    scopeRow.horizontalAlignment(HorizontalAlignment.CENTER);
-
-                    SYPassConfig.ChatProtectionScope scope = com.syntren.sypass.config.SYPassConfig.getChatProtectionScope();
-                    ButtonComponent scopeToggle = Components.button(
-                            Text.translatable("sypass.gui.settings.chat_scope", Text.translatable(scope.getTranslationKey())),
-                            b -> {
-                                SYPassConfig.ChatProtectionScope newScope = (scope == SYPassConfig.ChatProtectionScope.ALL_SERVERS)
-                                        ? SYPassConfig.ChatProtectionScope.CURRENT_SERVER
-                                        : SYPassConfig.ChatProtectionScope.ALL_SERVERS;
-                                com.syntren.sypass.config.SYPassConfig.setChatProtectionScope(newScope);
-                                rebuildUI();
-                            }
-                    );
-                    scopeToggle.horizontalSizing(Sizing.fill(100));
-                    scopeToggle.tooltip(Text.translatable("sypass.gui.settings.chat_scope.tooltip"));
-                    scopeRow.child(scopeToggle);
-                    mainCard.child(scopeRow);
-                }
 
                 // Рядок 4: Затримка авто-входу (ліворуч) та Швидкі утиліти (праворуч)
                 FlowLayout row4 = Containers.horizontalFlow(Sizing.fill(100), Sizing.content());
@@ -1671,6 +1652,70 @@ public class SYPassScreen extends BaseOwoScreen<FlowLayout> {
                 openFolderBtn.tooltip(Text.translatable("sypass.gui.bw.button.open_folder.tooltip"));
                 openFolderBtn.margins(Insets.top(2));
                 mainCard.child(openFolderBtn);
+            }
+            case CHAT_PROTECTION -> {
+                mainCard.child(Components.label(Text.translatable("sypass.gui.settings.chat_protect.title").formatted(Formatting.GOLD, Formatting.BOLD)).shadow(true).margins(Insets.bottom(2)));
+
+                LabelComponent desc = Components.label(Text.translatable("sypass.gui.settings.chat_protect.desc").formatted(Formatting.GRAY));
+                desc.maxWidth(cardWidth - 20);
+                mainCard.child(desc);
+
+                boolean chatProtect = com.syntren.sypass.config.SYPassConfig.isChatLeakProtectionEnabled();
+                ButtonComponent toggleBtn = Components.button(
+                        Text.translatable("sypass.gui.settings.chat_protect", chatProtect ? "§a" + Text.translatable("sypass.gui.settings.on").getString() : "§c" + Text.translatable("sypass.gui.settings.off").getString()),
+                        b -> {
+                            boolean newVal = !com.syntren.sypass.config.SYPassConfig.isChatLeakProtectionEnabled();
+                            com.syntren.sypass.config.SYPassConfig.setChatLeakProtectionEnabled(newVal);
+                            rebuildUI();
+                        }
+                );
+                toggleBtn.horizontalSizing(Sizing.fill(100));
+                toggleBtn.tooltip(Text.translatable("sypass.gui.settings.chat_protect.tooltip"));
+                mainCard.child(toggleBtn);
+
+                // Єдиний гармонійний контейнер налаштування області валідації
+                FlowLayout scopeCard = Containers.verticalFlow(Sizing.fill(100), Sizing.content());
+                scopeCard.surface(Surface.PANEL);
+                scopeCard.padding(Insets.of(6));
+                scopeCard.gap(4);
+                scopeCard.margins(Insets.vertical(2));
+
+                scopeCard.child(Components.label(Text.translatable("sypass.gui.settings.chat_scope.title").formatted(Formatting.YELLOW, Formatting.BOLD)).shadow(true));
+
+                SYPassConfig.ChatProtectionScope scope = com.syntren.sypass.config.SYPassConfig.getChatProtectionScope();
+                ButtonComponent scopeBtn = Components.button(
+                        Text.translatable("sypass.gui.settings.chat_scope.mode", Text.translatable(scope.getTranslationKey())),
+                        b -> {
+                            if (!chatProtect) return;
+                            SYPassConfig.ChatProtectionScope newScope = (scope == SYPassConfig.ChatProtectionScope.CURRENT_SERVER)
+                                    ? SYPassConfig.ChatProtectionScope.ALL_SERVERS
+                                    : SYPassConfig.ChatProtectionScope.CURRENT_SERVER;
+                            com.syntren.sypass.config.SYPassConfig.setChatProtectionScope(newScope);
+                            rebuildUI();
+                        }
+                );
+                scopeBtn.horizontalSizing(Sizing.fill(100));
+                if (!chatProtect) {
+                    scopeBtn.active = false;
+                }
+                scopeCard.child(scopeBtn);
+
+                String hintKey = (scope == SYPassConfig.ChatProtectionScope.CURRENT_SERVER)
+                        ? "sypass.gui.settings.chat_scope.current_hint"
+                        : "sypass.gui.settings.chat_scope.all_hint";
+                LabelComponent hintLabel = Components.label(Text.translatable(hintKey).formatted(Formatting.DARK_GRAY));
+                hintLabel.maxWidth(cardWidth - 32);
+                scopeCard.child(hintLabel);
+
+                mainCard.child(scopeCard);
+
+                ButtonComponent backBtn = Components.button(Text.translatable("sypass.gui.bw.otp.back"), b -> {
+                    settingsStage = SettingsStage.MAIN;
+                    rebuildUI();
+                });
+                backBtn.horizontalSizing(Sizing.fill(100));
+                backBtn.margins(Insets.top(4));
+                mainCard.child(backBtn);
             }
             case BITWARDEN -> {
                 mainCard.child(Components.label(Text.translatable("sypass.gui.settings.bw.title").formatted(Formatting.GOLD, Formatting.BOLD)).shadow(true).margins(Insets.bottom(2)));
@@ -1870,7 +1915,14 @@ public class SYPassScreen extends BaseOwoScreen<FlowLayout> {
             }
         }
 
-        root.child(mainCard);
+        int scrollHeight = Math.max(120, this.height - 90);
+        ScrollContainer<FlowLayout> scrollContainer = Containers.verticalScroll(
+                Sizing.fixed(cardWidth),
+                Sizing.fixed(Math.min(235, scrollHeight)),
+                mainCard
+        );
+        scrollContainer.margins(Insets.bottom(2));
+        root.child(scrollContainer);
 
         if (!statusMessage.isEmpty()) {
             root.child(Components.label(Text.literal(statusMessage)).shadow(true).margins(Insets.top(3)));

@@ -501,14 +501,13 @@ public class SYPassScreen extends BaseOwoScreen<FlowLayout> {
         infoLayout.child(topRow);
 
         FlowLayout userPassRow = Containers.horizontalFlow(Sizing.fill(100), Sizing.content());
-        userPassRow.gap(6);
+        userPassRow.gap(8);
         userPassRow.verticalAlignment(VerticalAlignment.CENTER);
 
         if (isActiveAccount) {
-            userPassRow.child(Components.label(Text.literal(username).formatted(Formatting.GREEN, Formatting.BOLD)).shadow(true));
-            LabelComponent activeBadge = Components.label(Text.literal("§a✔ " + Text.translatable("sypass.gui.account.active").getString())).shadow(true);
-            activeBadge.tooltip(Text.translatable("sypass.gui.account.active.tooltip"));
-            userPassRow.child(activeBadge);
+            LabelComponent userLabel = Components.label(Text.literal(username).formatted(Formatting.GREEN, Formatting.BOLD)).shadow(true);
+            userLabel.tooltip(Text.translatable("sypass.gui.account.active.tooltip"));
+            userPassRow.child(userLabel);
         } else {
             userPassRow.child(Components.label(Text.literal(username).formatted(Formatting.YELLOW)).shadow(true));
         }

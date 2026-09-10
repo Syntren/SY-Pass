@@ -19,8 +19,6 @@ import net.minecraft.text.Text;
 import net.minecraft.util.Formatting;
 import org.lwjgl.glfw.GLFW;
 
-import java.util.Map;
-
 public class SYPassClient implements ClientModInitializer {
 	private static KeyBinding openGuiKeyBinding;
 	private static KeyBinding quickLoginKeyBinding;

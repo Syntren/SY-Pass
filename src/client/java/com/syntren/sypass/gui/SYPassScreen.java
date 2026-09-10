@@ -1915,14 +1915,7 @@ public class SYPassScreen extends BaseOwoScreen<FlowLayout> {
             }
         }
 
-        int scrollHeight = Math.max(120, this.height - 90);
-        ScrollContainer<FlowLayout> scrollContainer = Containers.verticalScroll(
-                Sizing.fixed(cardWidth),
-                Sizing.fixed(Math.min(235, scrollHeight)),
-                mainCard
-        );
-        scrollContainer.margins(Insets.bottom(2));
-        root.child(scrollContainer);
+        root.child(mainCard);
 
         if (!statusMessage.isEmpty()) {
             root.child(Components.label(Text.literal(statusMessage)).shadow(true).margins(Insets.top(3)));

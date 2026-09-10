@@ -27,6 +27,7 @@ public class SYPassConfig {
         public boolean smartAutoLogin = true;
         public boolean smartAutoRegister = false;
         public boolean preventRegisterOverwrite = true;
+        public boolean chatLeakProtection = false;
     }
 
     public static void load() {
@@ -132,6 +133,15 @@ public class SYPassConfig {
 
     public static void setPreventRegisterOverwriteEnabled(boolean enabled) {
         data.preventRegisterOverwrite = enabled;
+        save();
+    }
+
+    public static boolean isChatLeakProtectionEnabled() {
+        return data.chatLeakProtection;
+    }
+
+    public static void setChatLeakProtectionEnabled(boolean enabled) {
+        data.chatLeakProtection = enabled;
         save();
     }
 

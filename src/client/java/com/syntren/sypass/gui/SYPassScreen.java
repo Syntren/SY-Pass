@@ -1465,7 +1465,7 @@ public class SYPassScreen extends BaseOwoScreen<FlowLayout> {
                 row2.child(smartRegisterToggle);
                 mainCard.child(row2);
 
-                // Рядок 3: Захист перезапису (ліворуч) та Генератор пароля (праворуч)
+                // Рядок 3: Захист перезапису (ліворуч) та Захист чату (праворуч)
                 FlowLayout row3 = Containers.horizontalFlow(Sizing.fill(100), Sizing.fixed(20));
                 row3.gap(8);
                 row3.horizontalAlignment(HorizontalAlignment.CENTER);
@@ -1482,21 +1482,23 @@ public class SYPassScreen extends BaseOwoScreen<FlowLayout> {
                 protectOverwriteToggle.horizontalSizing(Sizing.fixed(colWidth));
                 protectOverwriteToggle.tooltip(Text.translatable("sypass.gui.settings.prevent_overwrite.tooltip"));
 
-                ButtonComponent quickGenBtn = Components.button(Text.translatable("sypass.gui.settings.quick_gen"), b -> {
-                    String gen = com.syntren.sypass.util.PasswordGenerator.generateDefault();
-                    if (this.client != null && this.client.keyboard != null) {
-                        this.client.keyboard.setClipboard(gen);
-                    }
-                    this.statusMessage = Text.translatable("sypass.gui.settings.copied_gen", gen).getString();
-                    rebuildUI();
-                });
-                quickGenBtn.horizontalSizing(Sizing.fixed(colWidth));
+                boolean chatProtect = com.syntren.sypass.config.SYPassConfig.isChatLeakProtectionEnabled();
+                ButtonComponent chatProtectToggle = Components.button(
+                        Text.translatable("sypass.gui.settings.chat_protect", chatProtect ? "§a" + Text.translatable("sypass.gui.settings.on").getString() : "§c" + Text.translatable("sypass.gui.settings.off").getString()),
+                        b -> {
+                            boolean newVal = !com.syntren.sypass.config.SYPassConfig.isChatLeakProtectionEnabled();
+                            com.syntren.sypass.config.SYPassConfig.setChatLeakProtectionEnabled(newVal);
+                            b.setMessage(Text.translatable("sypass.gui.settings.chat_protect", newVal ? "§a" + Text.translatable("sypass.gui.settings.on").getString() : "§c" + Text.translatable("sypass.gui.settings.off").getString()));
+                        }
+                );
+                chatProtectToggle.horizontalSizing(Sizing.fixed(colWidth));
+                chatProtectToggle.tooltip(Text.translatable("sypass.gui.settings.chat_protect.tooltip"));
 
                 row3.child(protectOverwriteToggle);
-                row3.child(quickGenBtn);
+                row3.child(chatProtectToggle);
                 mainCard.child(row3);
 
-                // Рядок 4: Затримка авто-входу (ліворуч) та Відкрити папку config/sypass (праворуч)
+                // Рядок 4: Затримка авто-входу (ліворуч) та Швидкі утиліти (праворуч)
                 FlowLayout row4 = Containers.horizontalFlow(Sizing.fill(100), Sizing.content());
                 row4.gap(8);
                 row4.horizontalAlignment(HorizontalAlignment.CENTER);
@@ -1554,14 +1556,31 @@ public class SYPassScreen extends BaseOwoScreen<FlowLayout> {
                 delayButtons.child(plus10);
                 delayCol.child(delayButtons);
 
+                // Колонка праворуч: Генератор пароля + Відкрити папку
+                FlowLayout rightCol = Containers.verticalFlow(Sizing.fixed(colWidth), Sizing.content());
+                rightCol.gap(2);
+
+                ButtonComponent quickGenBtn = Components.button(Text.translatable("sypass.gui.settings.quick_gen"), b -> {
+                    String gen = com.syntren.sypass.util.PasswordGenerator.generateDefault();
+                    if (this.client != null && this.client.keyboard != null) {
+                        this.client.keyboard.setClipboard(gen);
+                    }
+                    this.statusMessage = Text.translatable("sypass.gui.settings.copied_gen", gen).getString();
+                    rebuildUI();
+                });
+                quickGenBtn.horizontalSizing(Sizing.fill(100));
+
                 ButtonComponent openFolderBtn = Components.button(Text.translatable("sypass.gui.bw.button.open_folder"), b -> {
                     Util.getOperatingSystem().open(BitwardenManager.CONFIG_DIR.toFile());
                 });
-                openFolderBtn.horizontalSizing(Sizing.fixed(colWidth));
+                openFolderBtn.horizontalSizing(Sizing.fill(100));
                 openFolderBtn.tooltip(Text.translatable("sypass.gui.bw.button.open_folder.tooltip"));
 
+                rightCol.child(quickGenBtn);
+                rightCol.child(openFolderBtn);
+
                 row4.child(delayCol);
-                row4.child(openFolderBtn);
+                row4.child(rightCol);
                 mainCard.child(row4);
 
                 // Рядок 5: Підменю (Резервні копії ліворуч, Bitwarden праворуч)

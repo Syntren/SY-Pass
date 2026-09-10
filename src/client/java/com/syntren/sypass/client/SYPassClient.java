@@ -10,9 +10,16 @@ import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientLifecycleEvents;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
+import net.fabricmc.fabric.api.client.message.v1.ClientSendMessageEvents;
+import net.minecraft.client.MinecraftClient;
+import net.minecraft.client.network.ServerInfo;
 import net.minecraft.client.option.KeyBinding;
 import net.minecraft.client.util.InputUtil;
+import net.minecraft.text.Text;
+import net.minecraft.util.Formatting;
 import org.lwjgl.glfw.GLFW;
+
+import java.util.Map;
 
 public class SYPassClient implements ClientModInitializer {
 	private static KeyBinding openGuiKeyBinding;
@@ -26,6 +33,37 @@ public class SYPassClient implements ClientModInitializer {
 		SYPassCommands.register();
 		AutoLoginHandler.register();
 		ClientLifecycleEvents.CLIENT_STOPPING.register(client -> ServerIconManager.clearCache());
+
+		ClientSendMessageEvents.ALLOW_CHAT.register(message -> {
+			if (!SYPassConfig.isChatLeakProtectionEnabled()) {
+				return true;
+			}
+			MinecraftClient client = MinecraftClient.getInstance();
+			if (client == null || client.player == null) return true;
+
+			ServerInfo server = client.getCurrentServerEntry();
+			if (server == null || server.address == null || server.address.isBlank()) return true;
+
+			String normServer = PasswordManager.normalizeServerAddress(server.address);
+			Map<String, PasswordManager.AccountData> accounts = PasswordManager.getAllData().get(normServer);
+			if (accounts == null || accounts.isEmpty()) return true;
+
+			for (PasswordManager.AccountData acc : accounts.values()) {
+				String pass = acc.password();
+				if (pass != null && !pass.isBlank()) {
+					boolean leaks = pass.length() >= 3 ? message.contains(pass) : message.trim().equals(pass);
+					if (leaks) {
+						client.player.sendMessage(
+								Text.translatable("sypass.chat.blocked_leak").formatted(Formatting.RED),
+								false
+						);
+						return false;
+					}
+				}
+			}
+
+			return true;
+		});
 
 		openGuiKeyBinding = KeyBindingHelper.registerKeyBinding(new KeyBinding(
 				"key.sypass.open_gui",

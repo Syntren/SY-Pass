@@ -31,7 +31,7 @@ Starting with version **2.0.0**, SY-Pass has been completely rebuilt on a modern
   - `/sypass register [length]` (or `/sypass quickreg`) — Quick-register on the current server with an auto-generated password.
   - `/sypass remove` — Remove saved password for the current server.
   - `/sypass generate [length]` — Generate a strong password and copy to clipboard.
-- **🎨 ModMenu & NeoForge Mods Screen Integration:** Integrates into ModMenu on Fabric and the native Mods Config Screen on NeoForge. Default hotkeys: **`P`** (open GUI), **`K`** (quick login), and an optional customizable keybinding for **Quick Register**.
+- **🎨 ModMenu & NeoForge Mods Screen Integration:** Integrates into ModMenu on Fabric and the native Mods Config Screen on NeoForge. Default hotkeys: **`[`** (open GUI), **`K`** (quick login), and an optional customizable keybinding for **Quick Register**.
 - **🌐 Multilingual:** Full localization for Ukrainian (`uk_ua`), English (`en_us`), and Russian (`ru_ru`).
 
 ---

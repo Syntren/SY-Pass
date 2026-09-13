@@ -378,6 +378,8 @@ public class SYPassScreen extends Screen {
                   .build();
                 addRenderableWidget(toggleEyeBtn);
 
+                final Button[] loginNavButtons = new Button[4]; // [0]=loginBtn, [1]=apiKeyBtn, [2]=sessionKeyBtn, [3]=registerBtn
+
                 Button loginBtn = Button.builder(Component.translatable("sypass.gui.bw.login.button_login"), btn -> {
                     this.savedEmail = this.bwEmailBox.getValue().trim();
                     this.savedPassword = this.bwPasswordBox.getValue().trim();
@@ -387,24 +389,33 @@ public class SYPassScreen extends Screen {
                         return;
                     }
 
-                    handleLogin(null, null, btn);
+                    List<Button> toDisable = new ArrayList<>();
+                    for (Button b : loginNavButtons) {
+                        if (b != null) toDisable.add(b);
+                    }
+                    handleLogin(null, null, toDisable);
                 }).bounds(formX, y + 78, formWidth, 20).build();
+                loginNavButtons[0] = loginBtn;
                 addRenderableWidget(loginBtn);
 
                 int halfW = (formWidth - 6) / 2;
-                addRenderableWidget(Button.builder(Component.translatable("sypass.gui.bw.login.apikey_tab"), btn -> {
+                Button apiKeyBtn = Button.builder(Component.translatable("sypass.gui.bw.login.apikey_tab"), btn -> {
                     this.bwStage = BwStage.API_KEY;
                     clearWidgets();
                     init();
-                }).bounds(formX, y + 104, halfW, 20).build());
+                }).bounds(formX, y + 104, halfW, 20).build();
+                loginNavButtons[1] = apiKeyBtn;
+                addRenderableWidget(apiKeyBtn);
 
-                addRenderableWidget(Button.builder(Component.translatable("sypass.gui.bw.login.session_tab"), btn -> {
+                Button sessionKeyBtn = Button.builder(Component.translatable("sypass.gui.bw.login.session_tab"), btn -> {
                     this.bwStage = BwStage.SESSION_KEY;
                     clearWidgets();
                     init();
-                }).bounds(formX + halfW + 6, y + 104, halfW, 20).build());
+                }).bounds(formX + halfW + 6, y + 104, halfW, 20).build();
+                loginNavButtons[2] = sessionKeyBtn;
+                addRenderableWidget(sessionKeyBtn);
 
-                addRenderableWidget(Button.builder(Component.translatable("sypass.gui.bw.login.register"), btn -> {
+                Button registerBtn = Button.builder(Component.translatable("sypass.gui.bw.login.register"), btn -> {
                     if (this.minecraft != null) {
                         this.minecraft.setScreen(new ConfirmLinkScreen(confirmed -> {
                             if (confirmed) {
@@ -415,12 +426,16 @@ public class SYPassScreen extends Screen {
                     }
                 }).bounds(formX, y + 130, formWidth, 20)
                   .tooltip(Tooltip.create(Component.translatable("sypass.gui.bw.login.register.tooltip")))
-                  .build());
+                  .build();
+                loginNavButtons[3] = registerBtn;
+                addRenderableWidget(registerBtn);
             }
             case OTP -> {
                 // Вікно двоетапної автентифікації 2FA (динамічно з'являється при запиті CLI)
                 int methodBtnW = (formWidth - 6) / 2;
                 boolean isAuthSelected = !"1".equals(selected2faMethod);
+
+                final Button[] otpNavButtons = new Button[5]; // [0]=confirmOtpBtn, [1]=backBtn, [2]=authBtn, [3]=emailBtn, [4]=sendEmailBtn
 
                 Button authBtn = Button.builder(
                         Component.translatable("sypass.gui.bw.otp.method_authenticator")
@@ -431,6 +446,7 @@ public class SYPassScreen extends Screen {
                             init();
                         }
                 ).bounds(formX, y + 16, methodBtnW, 20).build();
+                otpNavButtons[2] = authBtn;
                 addRenderableWidget(authBtn);
 
                 Button emailBtn = Button.builder(
@@ -442,6 +458,7 @@ public class SYPassScreen extends Screen {
                             init();
                         }
                 ).bounds(formX + methodBtnW + 6, y + 16, methodBtnW, 20).build();
+                otpNavButtons[3] = emailBtn;
                 addRenderableWidget(emailBtn);
 
                 this.bwOtpBox = new EditBox(this.font, formX, y + 42, formWidth, 20, Component.translatable("sypass.gui.bw.otp.placeholder"));
@@ -452,21 +469,28 @@ public class SYPassScreen extends Screen {
                 Button confirmOtpBtn = Button.builder(Component.translatable("sypass.gui.bw.otp.confirm"), btn -> {
                     String otp = this.bwOtpBox.getValue().trim();
                     if (!otp.isEmpty()) {
-                        handleLogin(otp, selected2faMethod, btn);
+                        List<Button> toDisable = new ArrayList<>();
+                        for (Button b : otpNavButtons) {
+                            if (b != null) toDisable.add(b);
+                        }
+                        handleLogin(otp, selected2faMethod, toDisable);
                     }
                 }).bounds(formX, y + 68, formWidth, 20).build();
+                otpNavButtons[0] = confirmOtpBtn;
                 addRenderableWidget(confirmOtpBtn);
 
                 int nextBtnY = y + 92;
                 if ("1".equals(selected2faMethod)) {
                     Button sendEmailBtn = Button.builder(Component.translatable("sypass.gui.bw.otp.send_email"), btn -> {
                         btn.active = false;
+                        if (otpNavButtons[1] != null) otpNavButtons[1].active = false;
                         setStatusMessage("§e" + Component.translatable("sypass.gui.status.syncing").getString());
                         BitwardenManager.getExecutor().execute(() -> {
                             BitwardenManager.sendEmail2faCode(savedEmail, savedPassword);
                             if (this.minecraft != null) {
                                 this.minecraft.execute(() -> {
                                     btn.active = true;
+                                    if (otpNavButtons[1] != null) otpNavButtons[1].active = true;
                                     setStatusMessage("§a" + Component.translatable("sypass.gui.bw.otp.email_sent").getString());
                                 });
                             }
@@ -474,16 +498,19 @@ public class SYPassScreen extends Screen {
                     }).bounds(formX, nextBtnY, formWidth, 20)
                       .tooltip(Tooltip.create(Component.translatable("sypass.gui.bw.otp.send_email_tooltip")))
                       .build();
+                    otpNavButtons[4] = sendEmailBtn;
                     addRenderableWidget(sendEmailBtn);
                     nextBtnY += 24;
                 }
 
-                addRenderableWidget(Button.builder(Component.translatable("sypass.gui.bw.otp.back"), btn -> {
+                Button backBtn = Button.builder(Component.translatable("sypass.gui.bw.otp.back"), btn -> {
                     this.bwStage = BwStage.LOGIN;
                     this.statusMessage = "";
                     clearWidgets();
                     init();
-                }).bounds(formX, nextBtnY, formWidth, 20).build());
+                }).bounds(formX, nextBtnY, formWidth, 20).build();
+                otpNavButtons[1] = backBtn;
+                addRenderableWidget(backBtn);
             }
             case API_KEY -> {
                 this.bwClientIdBox = new EditBox(this.font, formX, y + 16, formWidth, 20, Component.translatable("sypass.gui.bw.apikey.client_id"));
@@ -503,7 +530,9 @@ public class SYPassScreen extends Screen {
                 this.bwMasterPasswordBox.setFormatter((text, firstCharIndex) -> FormattedCharSequence.forward("•".repeat(text.length()), Style.EMPTY));
                 addRenderableWidget(this.bwMasterPasswordBox);
 
-                addRenderableWidget(Button.builder(Component.translatable("sypass.gui.bw.apikey.login_btn"), btn -> {
+                final Button[] apiNavButtons = new Button[2]; // [0]=loginBtn, [1]=backBtn
+
+                Button loginBtn = Button.builder(Component.translatable("sypass.gui.bw.apikey.login_btn"), btn -> {
                     String id = this.bwClientIdBox.getValue().trim();
                     String secret = this.bwClientSecretBox.getValue().trim();
                     String masterPass = this.bwMasterPasswordBox.getValue().trim();
@@ -514,12 +543,14 @@ public class SYPassScreen extends Screen {
                     }
 
                     btn.active = false;
+                    if (apiNavButtons[1] != null) apiNavButtons[1].active = false;
                     setStatusMessage("§e" + Component.translatable("sypass.gui.bw.login.logging_in_apikey").getString());
                     BitwardenManager.getExecutor().execute(() -> {
                         BitwardenManager.BwLoginResponse resp = BitwardenManager.loginWithApiKey(id, secret, masterPass);
                         if (this.minecraft != null) {
                             this.minecraft.execute(() -> {
                                 btn.active = true;
+                                if (apiNavButtons[1] != null) apiNavButtons[1].active = true;
                                 setStatusMessage(resp.message());
                                 if (resp.isSuccess()) {
                                     this.bwStage = BwStage.LOGGED_IN;
@@ -529,13 +560,17 @@ public class SYPassScreen extends Screen {
                             });
                         }
                     });
-                }).bounds(formX, y + 120, formWidth, 20).build());
+                }).bounds(formX, y + 120, formWidth, 20).build();
+                apiNavButtons[0] = loginBtn;
+                addRenderableWidget(loginBtn);
 
-                addRenderableWidget(Button.builder(Component.translatable("sypass.gui.bw.otp.back"), btn -> {
+                Button backBtn = Button.builder(Component.translatable("sypass.gui.bw.otp.back"), btn -> {
                     this.bwStage = BwStage.LOGIN;
                     clearWidgets();
                     init();
-                }).bounds(formX, y + 144, formWidth, 20).build());
+                }).bounds(formX, y + 144, formWidth, 20).build();
+                apiNavButtons[1] = backBtn;
+                addRenderableWidget(backBtn);
             }
             case SESSION_KEY -> {
                 this.bwSessionKeyBox = new EditBox(this.font, formX, y + 40, formWidth, 20, Component.translatable("sypass.gui.bw.session.placeholder"));
@@ -543,7 +578,9 @@ public class SYPassScreen extends Screen {
                 this.bwSessionKeyBox.setHint(Component.translatable("sypass.gui.bw.session.placeholder"));
                 addRenderableWidget(this.bwSessionKeyBox);
 
-                addRenderableWidget(Button.builder(Component.translatable("sypass.gui.bw.session.unlock_btn"), btn -> {
+                final Button[] sessionNavButtons = new Button[2]; // [0]=unlockBtn, [1]=backBtn
+
+                Button unlockBtn = Button.builder(Component.translatable("sypass.gui.bw.session.unlock_btn"), btn -> {
                     String key = this.bwSessionKeyBox.getValue().trim();
                     if (key.isEmpty()) {
                         setStatusMessage("§c" + Component.translatable("sypass.gui.bw.error.empty_session").getString());
@@ -551,12 +588,14 @@ public class SYPassScreen extends Screen {
                     }
 
                     btn.active = false;
+                    if (sessionNavButtons[1] != null) sessionNavButtons[1].active = false;
                     setStatusMessage("§e" + Component.translatable("sypass.gui.bw.session.verifying").getString());
                     BitwardenManager.getExecutor().execute(() -> {
                         BitwardenManager.BwLoginResponse resp = BitwardenManager.loginWithSessionKey(key);
                         if (this.minecraft != null) {
                             this.minecraft.execute(() -> {
                                 btn.active = true;
+                                if (sessionNavButtons[1] != null) sessionNavButtons[1].active = true;
                                 setStatusMessage(resp.message());
                                 if (resp.isSuccess()) {
                                     this.bwStage = BwStage.LOGGED_IN;
@@ -566,13 +605,17 @@ public class SYPassScreen extends Screen {
                             });
                         }
                     });
-                }).bounds(formX, y + 70, formWidth, 20).build());
+                }).bounds(formX, y + 70, formWidth, 20).build();
+                sessionNavButtons[0] = unlockBtn;
+                addRenderableWidget(unlockBtn);
 
-                addRenderableWidget(Button.builder(Component.translatable("sypass.gui.bw.otp.back"), btn -> {
+                Button backBtn = Button.builder(Component.translatable("sypass.gui.bw.otp.back"), btn -> {
                     this.bwStage = BwStage.LOGIN;
                     clearWidgets();
                     init();
-                }).bounds(formX, y + 96, formWidth, 20).build());
+                }).bounds(formX, y + 96, formWidth, 20).build();
+                sessionNavButtons[1] = backBtn;
+                addRenderableWidget(backBtn);
             }
             case LOGGED_IN -> {
                 int btnW = formWidth;
@@ -635,15 +678,23 @@ public class SYPassScreen extends Screen {
         }
     }
 
-    private void handleLogin(String otp, String method, Button actionBtn) {
-        if (actionBtn != null) actionBtn.active = false;
+    private void handleLogin(String otp, String method, List<Button> buttonsToDisable) {
+        if (buttonsToDisable != null) {
+            for (Button b : buttonsToDisable) {
+                if (b != null) b.active = false;
+            }
+        }
         setStatusMessage("§e" + Component.translatable("sypass.gui.bw.login.logging_in").getString());
 
         BitwardenManager.getExecutor().execute(() -> {
             BitwardenManager.BwLoginResponse resp = BitwardenManager.login(savedEmail, savedPassword, otp, method);
             if (this.minecraft != null) {
                 this.minecraft.execute(() -> {
-                    if (actionBtn != null) actionBtn.active = true;
+                    if (buttonsToDisable != null) {
+                        for (Button b : buttonsToDisable) {
+                            if (b != null) b.active = true;
+                        }
+                    }
                     switch (resp.status()) {
                         case SUCCESS -> {
                             this.bwStage = BwStage.LOGGED_IN;

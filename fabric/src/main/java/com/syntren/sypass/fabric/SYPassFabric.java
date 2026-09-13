@@ -46,7 +46,7 @@ public class SYPassFabric implements ClientModInitializer {
         openGuiKeyMapping = KeyBindingHelper.registerKeyBinding(new KeyMapping(
                 "key.sypass.open_gui",
                 InputConstants.Type.KEYSYM,
-                GLFW.GLFW_KEY_P,
+                GLFW.GLFW_KEY_LEFT_BRACKET,
                 "category.sypass.title"
         ));
 

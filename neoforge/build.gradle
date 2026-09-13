@@ -68,6 +68,7 @@ shadowJar {
 remapJar {
     input.set shadowJar.archiveFile
     dependsOn shadowJar
+    archiveFileName.set("${rootProject.archives_name}-neoforge-${project.version}-mc1.21-1.21.1.jar")
 }
 
 sourcesJar {

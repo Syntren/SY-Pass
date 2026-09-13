@@ -57,8 +57,8 @@ To compile both the Fabric and NeoForge versions, run:
 
 The compiled mod JAR files will be placed in:
 ```
-fabric/build/libs/sypass-fabric-1.21.1-2.0.0.jar
-neoforge/build/libs/sypass-neoforge-1.21.1-2.0.0.jar
+fabric/build/libs/sypass-fabric-2.0.0-mc1.21-1.21.1.jar
+neoforge/build/libs/sypass-neoforge-2.0.0-mc1.21-1.21.1.jar
 ```
 
 ---

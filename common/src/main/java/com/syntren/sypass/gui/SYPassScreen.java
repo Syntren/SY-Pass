@@ -92,6 +92,12 @@ public class SYPassScreen extends Screen {
     private String selected2faMethod = "0"; // "0" = Authenticator, "1" = Email
     private boolean showMasterPassword = false;
 
+    // Async Bitwarden deletion animation state
+    private String activeBwDeletingKey = null;
+    private String activeBwSuccessKey = null;
+    private long bwSuccessUntilMs = 0L;
+    private static final String[] LOADING_DOTS = new String[]{"§e.", "§e..", "§e..."};
+
     // Widgets
     private EditBox searchBox;
     private PasswordListWidget passwordList;
@@ -1306,12 +1312,48 @@ public class SYPassScreen extends Screen {
                 // 5. Кнопка видалення лише з Bitwarden (якщо синхронізовано)
                 if (canDeleteFromBw) {
                     boolean isPendingBw = key.equals(screen.pendingBwDeleteKey);
-                    this.deleteBwBtn = Button.builder(Component.literal(isPendingBw ? "§4✔?" : "§c☁-"), btn -> {
+                    boolean isDeleting = key.equals(screen.activeBwDeletingKey);
+                    boolean isSuccess = key.equals(screen.activeBwSuccessKey);
+
+                    String btnText;
+                    if (isDeleting) {
+                        int dotIdx = (int) ((System.currentTimeMillis() / 350L) % 3);
+                        btnText = LOADING_DOTS[dotIdx];
+                    } else if (isSuccess) {
+                        btnText = "§a✔";
+                    } else if (isPendingBw) {
+                        btnText = "§4✔?";
+                    } else {
+                        btnText = "§c☁-";
+                    }
+
+                    this.deleteBwBtn = Button.builder(Component.literal(btnText), btn -> {
+                        if (key.equals(screen.activeBwDeletingKey) || key.equals(screen.activeBwSuccessKey)) {
+                            return;
+                        }
                         if (key.equals(screen.pendingBwDeleteKey)) {
                             screen.pendingBwDeleteKey = null;
-                            BitwardenManager.deleteFromBitwardenOnlyAsync(serverIp, username, data.remoteId());
-                            screen.setStatusMessage(Component.translatable("sypass.gui.status.deleted_bw", username, serverIp).getString());
-                            screen.refreshPasswordList();
+                            screen.activeBwDeletingKey = key;
+                            btn.active = false;
+                            btn.setMessage(Component.literal("§e."));
+                            screen.setStatusMessage("§e" + Component.translatable("sypass.gui.status.syncing").getString());
+
+                            BitwardenManager.deleteFromBitwardenOnlyAsync(serverIp, username, data.remoteId()).thenAccept(success -> {
+                                if (screen.minecraft != null) {
+                                    screen.minecraft.execute(() -> {
+                                        screen.activeBwDeletingKey = null;
+                                        if (success) {
+                                            screen.activeBwSuccessKey = key;
+                                            screen.bwSuccessUntilMs = System.currentTimeMillis() + 2000L;
+                                            screen.setStatusMessage(Component.translatable("sypass.gui.status.deleted_bw", username, serverIp).getString());
+                                            btn.setMessage(Component.literal("§a✔"));
+                                        } else {
+                                            screen.setStatusMessage("§c" + Component.translatable("sypass.gui.status.deleted_bw_failed", username).getString());
+                                            screen.refreshPasswordList();
+                                        }
+                                    });
+                                }
+                            });
                         } else {
                             screen.pendingBwDeleteKey = key;
                             screen.pendingDeleteKey = null;
@@ -1321,6 +1363,10 @@ public class SYPassScreen extends Screen {
                     }).bounds(0, 0, 22, 20)
                       .tooltip(Tooltip.create(Component.translatable(isPendingBw ? "sypass.gui.button.delete_bw.confirm" : "sypass.gui.button.delete_bw.tooltip")))
                       .build();
+
+                    if (isDeleting || isSuccess) {
+                        this.deleteBwBtn.active = false;
+                    }
                     children.add(deleteBwBtn);
                 }
 
@@ -1377,6 +1423,23 @@ public class SYPassScreen extends Screen {
 
                 // Рядок /login тепер має 6px відступу від нижнього краю картки
                 guiGraphics.drawString(font, Component.literal("§8" + data.command()), textX, cardY + 27, 0x888888, true);
+
+                // Анімація видалення та успіху на кнопці deleteBwBtn
+                if (deleteBwBtn != null) {
+                    if (key.equals(screen.activeBwDeletingKey)) {
+                        deleteBwBtn.active = false;
+                        int dotIdx = (int) ((System.currentTimeMillis() / 350L) % 3);
+                        deleteBwBtn.setMessage(Component.literal(LOADING_DOTS[dotIdx]));
+                    } else if (key.equals(screen.activeBwSuccessKey)) {
+                        deleteBwBtn.active = false;
+                        if (System.currentTimeMillis() < screen.bwSuccessUntilMs) {
+                            deleteBwBtn.setMessage(Component.literal("§a✔"));
+                        } else {
+                            screen.activeBwSuccessKey = null;
+                            screen.refreshPasswordList();
+                        }
+                    }
+                }
 
                 int btnY = cardY + 11;
                 int totalBtnWidth = (children.size() * 22);

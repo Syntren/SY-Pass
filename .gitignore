@@ -44,6 +44,7 @@ replay_*.log
 *.jar
 
 # tools & caches
+.architectury-transformer/
 graphify-out/
 .graphifyignore
 .kilo/

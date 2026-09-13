@@ -1,0 +1,34 @@
+{
+  "schemaVersion": 1,
+  "id": "sypass",
+  "version": "${version}",
+  "name": "SY-Pass",
+  "description": "In-game password manager with auto-login and optional Bitwarden sync.",
+  "authors": [
+    "Syntren"
+  ],
+  "contact": {
+    "homepage": "https://github.com/Syntren/SY-Pass",
+    "sources": "https://github.com/Syntren/SY-Pass"
+  },
+  "license": "MIT",
+  "icon": "assets/sypass/icon.png",
+  "environment": "client",
+  "entrypoints": {
+    "client": [
+      "com.syntren.sypass.fabric.SYPassFabric"
+    ],
+    "modmenu": [
+      "com.syntren.sypass.fabric.compat.modmenu.SYPassModMenu"
+    ]
+  },
+  "depends": {
+    "fabricloader": ">=0.16.0",
+    "minecraft": ">=1.21 <=1.21.1",
+    "java": ">=21",
+    "fabric-api": "*"
+  },
+  "suggests": {
+    "modmenu": "*"
+  }
+}

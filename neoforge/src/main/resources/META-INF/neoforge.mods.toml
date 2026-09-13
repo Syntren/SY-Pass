@@ -1,0 +1,25 @@
+modLoader="javafml"
+loaderVersion="[4,)"
+license="MIT"
+
+[[mods]]
+modId="sypass"
+version="${version}"
+displayName="SY-Pass"
+logoFile="assets/sypass/icon.png"
+authors="Syntren"
+description='''In-game password manager with auto-login and optional Bitwarden sync.'''
+
+[[dependencies.sypass]]
+modId="neoforge"
+type="required"
+versionRange="[21.1.0,)"
+ordering="NONE"
+side="CLIENT"
+
+[[dependencies.sypass]]
+modId="minecraft"
+type="required"
+versionRange="[1.21.1,1.21.2)"
+ordering="NONE"
+side="CLIENT"

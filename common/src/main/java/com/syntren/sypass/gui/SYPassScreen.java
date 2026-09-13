@@ -1,0 +1,1209 @@
+package com.syntren.sypass.gui;
+
+import com.syntren.sypass.config.SYPassConfig;
+import com.syntren.sypass.platform.PlatformHelper;
+import com.syntren.sypass.storage.BitwardenManager;
+import com.syntren.sypass.storage.PasswordManager;
+import com.syntren.sypass.util.PasswordGenerator;
+import net.minecraft.ChatFormatting;
+import net.minecraft.Util;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.Font;
+import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.components.AbstractWidget;
+import net.minecraft.client.gui.components.Button;
+import net.minecraft.client.gui.components.ContainerObjectSelectionList;
+import net.minecraft.client.gui.components.EditBox;
+import net.minecraft.client.gui.components.Tooltip;
+import net.minecraft.client.gui.components.events.GuiEventListener;
+import net.minecraft.client.gui.narration.NarratableEntry;
+import net.minecraft.client.gui.screens.ConfirmLinkScreen;
+import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.network.chat.Component;
+import net.minecraft.network.chat.Style;
+import net.minecraft.resources.ResourceLocation;
+import net.minecraft.util.FormattedCharSequence;
+
+import java.io.File;
+import java.util.*;
+
+public class SYPassScreen extends Screen {
+
+    private final Screen parent;
+
+    public enum Tab {
+        LOCAL_PASSWORDS,
+        BITWARDEN,
+        SETTINGS
+    }
+
+    public enum BwStage {
+        CHECKING_STATUS,
+        CLI_NOT_FOUND,
+        LOGIN,
+        API_KEY,
+        SESSION_KEY,
+        LOGGED_IN
+    }
+
+    public enum SettingsStage {
+        MAIN,
+        CHAT_PROTECTION,
+        BACKUP,
+        BITWARDEN
+    }
+
+    public enum SortMode {
+        FAVORITES_FIRST("sypass.gui.sort.favorites", "§e★"),
+        ALPHABETICAL("sypass.gui.sort.alphabetical", "§fA-Z"),
+        RECENT("sypass.gui.sort.recent", "§b🕒");
+
+        private final String translationKey;
+        private final String label;
+
+        SortMode(String translationKey, String label) {
+            this.translationKey = translationKey;
+            this.label = label;
+        }
+
+        public String getTranslationKey() { return translationKey; }
+        public String getLabel() { return label; }
+
+        public SortMode next() {
+            SortMode[] vals = values();
+            return vals[(this.ordinal() + 1) % vals.length];
+        }
+    }
+
+    private Tab activeTab = Tab.LOCAL_PASSWORDS;
+    private BwStage bwStage = BitwardenManager.hasActiveSession() ? BwStage.LOGGED_IN : BwStage.CHECKING_STATUS;
+    private SettingsStage settingsStage = SettingsStage.MAIN;
+    private SortMode sortMode = SortMode.FAVORITES_FIRST;
+    private boolean onlyFavorites = false;
+    private boolean exportAsCsv = false;
+    private String searchQuery = "";
+    private String statusMessage = "";
+
+    // Cached Bitwarden status to completely eliminate main thread hangs
+    private BitwardenManager.BwStatusInfo cachedStatusInfo = null;
+
+    // Widgets
+    private EditBox searchBox;
+    private PasswordListWidget passwordList;
+    private final Set<String> revealedPasswords = new HashSet<>();
+    private String pendingDeleteKey = null;
+    private String pendingBwDeleteKey = null;
+
+    // Bitwarden state & inputs
+    private EditBox bwEmailBox;
+    private EditBox bwPasswordBox;
+    private EditBox bwOtpBox;
+    private EditBox bwClientIdBox;
+    private EditBox bwClientSecretBox;
+    private EditBox bwMasterPasswordBox;
+    private EditBox bwSessionKeyBox;
+
+    // Backup input
+    private EditBox backupPassBox;
+
+    public SYPassScreen() {
+        this(null);
+    }
+
+    public SYPassScreen(Screen parent) {
+        super(Component.translatable("sypass.gui.title"));
+        this.parent = parent;
+    }
+
+    public void setStatusMessage(String message) {
+        this.statusMessage = (message != null) ? message : "";
+    }
+
+    public void refreshPasswordList() {
+        if (this.passwordList != null) {
+            this.passwordList.refresh(this.searchQuery, this.sortMode, this.onlyFavorites);
+        }
+    }
+
+    @Override
+    protected void init() {
+        super.init();
+
+        int contentWidth = Math.min(440, this.width - 32);
+        int contentX = (this.width - contentWidth) / 2;
+
+        if (!SYPassConfig.isBitwardenEnabled() && activeTab == Tab.BITWARDEN) {
+            activeTab = Tab.LOCAL_PASSWORDS;
+        }
+
+        // 1. Верхні вкладки
+        int headerY = 8;
+        int localWidth = 150;
+        int bwWidth = SYPassConfig.isBitwardenEnabled() ? 120 : 0;
+        int settingsWidth = 110;
+        int totalTabsWidth = localWidth + (bwWidth > 0 ? bwWidth + 6 : 0) + settingsWidth + 6;
+        int tabStartX = (this.width - totalTabsWidth) / 2;
+
+        int currentCount = PasswordManager.getTotalCount();
+        String localTabTitle = (activeTab == Tab.LOCAL_PASSWORDS ? "§e§l" : "§7") + Component.translatable("sypass.gui.tab.local", currentCount).getString();
+        addRenderableWidget(Button.builder(Component.literal(localTabTitle), btn -> switchTab(Tab.LOCAL_PASSWORDS))
+                .bounds(tabStartX, headerY, localWidth, 20).build());
+
+        int nextX = tabStartX + localWidth + 6;
+        if (SYPassConfig.isBitwardenEnabled()) {
+            String bwTabTitle = (activeTab == Tab.BITWARDEN ? "§e§l" : "§7") + Component.translatable("sypass.gui.tab.bitwarden").getString();
+            addRenderableWidget(Button.builder(Component.literal(bwTabTitle), btn -> {
+                if (BitwardenManager.hasActiveSession()) {
+                    this.bwStage = BwStage.LOGGED_IN;
+                } else if (this.cachedStatusInfo != null) {
+                    this.bwStage = this.cachedStatusInfo.isInstalled() ? BwStage.LOGIN : BwStage.CLI_NOT_FOUND;
+                } else {
+                    this.bwStage = BwStage.CHECKING_STATUS;
+                    checkBwStatusAsync();
+                }
+                switchTab(Tab.BITWARDEN);
+            }).bounds(nextX, headerY, bwWidth, 20).build());
+            nextX += bwWidth + 6;
+        }
+
+        String settingsTabTitle = (activeTab == Tab.SETTINGS ? "§e§l" : "§7") + Component.translatable("sypass.gui.tab.settings").getString();
+        addRenderableWidget(Button.builder(Component.literal(settingsTabTitle), btn -> {
+            this.settingsStage = SettingsStage.MAIN;
+            switchTab(Tab.SETTINGS);
+        }).bounds(nextX, headerY, settingsWidth, 20).build());
+
+        // 2. Вміст активної вкладки
+        switch (activeTab) {
+            case LOCAL_PASSWORDS -> initLocalPasswordsTab(contentX, contentWidth);
+            case BITWARDEN -> initBitwardenTab(contentX, contentWidth);
+            case SETTINGS -> initSettingsTab(contentX, contentWidth);
+        }
+    }
+
+    private void switchTab(Tab tab) {
+        this.activeTab = tab;
+        this.clearWidgets();
+        this.init();
+    }
+
+    private void checkBwStatusAsync() {
+        BitwardenManager.getExecutor().execute(() -> {
+            BitwardenManager.BwStatusInfo status = BitwardenManager.getStatusInfo();
+            if (this.minecraft != null) {
+                this.minecraft.execute(() -> {
+                    this.cachedStatusInfo = status;
+                    if (status.isUnlocked() || BitwardenManager.hasActiveSession()) {
+                        this.bwStage = BwStage.LOGGED_IN;
+                    } else if (!status.isInstalled()) {
+                        this.bwStage = BwStage.CLI_NOT_FOUND;
+                    } else {
+                        this.bwStage = BwStage.LOGIN;
+                    }
+                    this.clearWidgets();
+                    this.init();
+                });
+            }
+        });
+    }
+
+    // ==========================================
+    // Вкладка 1: Паролі (LOCAL_PASSWORDS)
+    // ==========================================
+    private void initLocalPasswordsTab(int contentX, int contentWidth) {
+        int contentTop = 32;
+
+        int sortBtnWidth = 34;
+        int favFilterWidth = 22;
+        int searchWidth = contentWidth - sortBtnWidth - favFilterWidth - 8;
+
+        this.searchBox = new EditBox(this.font, contentX, contentTop, searchWidth, 20, Component.translatable("sypass.gui.search.placeholder"));
+        this.searchBox.setHint(Component.translatable("sypass.gui.search.placeholder"));
+        this.searchBox.setValue(this.searchQuery);
+        this.searchBox.setResponder(query -> {
+            this.searchQuery = query;
+            refreshPasswordList();
+        });
+        addRenderableWidget(this.searchBox);
+
+        Button sortBtn = Button.builder(Component.literal(this.sortMode.getLabel()), btn -> {
+            this.sortMode = this.sortMode.next();
+            btn.setMessage(Component.literal(this.sortMode.getLabel()));
+            btn.setTooltip(Tooltip.create(Component.translatable(this.sortMode.getTranslationKey())));
+            refreshPasswordList();
+        }).bounds(contentX + searchWidth + 4, contentTop, sortBtnWidth, 20)
+          .tooltip(Tooltip.create(Component.translatable(this.sortMode.getTranslationKey())))
+          .build();
+        addRenderableWidget(sortBtn);
+
+        Button favFilterBtn = Button.builder(Component.literal(this.onlyFavorites ? "§e★" : "§7☆"), btn -> {
+            this.onlyFavorites = !this.onlyFavorites;
+            btn.setMessage(Component.literal(this.onlyFavorites ? "§e★" : "§7☆"));
+            btn.setTooltip(Tooltip.create(Component.translatable(this.onlyFavorites ? "sypass.gui.filter.all.tooltip" : "sypass.gui.filter.favorites.tooltip")));
+            refreshPasswordList();
+        }).bounds(contentX + searchWidth + 4 + sortBtnWidth + 4, contentTop, favFilterWidth, 20)
+          .tooltip(Tooltip.create(Component.translatable(this.onlyFavorites ? "sypass.gui.filter.all.tooltip" : "sypass.gui.filter.favorites.tooltip")))
+          .build();
+        addRenderableWidget(favFilterBtn);
+
+        // Список записів із висотою слота 46px для вільного розміщення /login
+        int listTop = contentTop + 24;
+        int listHeight = this.height - listTop - 54;
+        this.passwordList = new PasswordListWidget(this.minecraft, this.width, listHeight, listTop, 46, contentWidth, this);
+        addRenderableWidget(this.passwordList);
+        refreshPasswordList();
+
+        // Нижня панель дій, чітко вирівняна за шириною contentWidth
+        int bottomRowY = this.height - 26;
+        boolean bwEnabled = SYPassConfig.isBitwardenEnabled();
+
+        if (bwEnabled) {
+            int gap = 6;
+            int addW = (contentWidth - gap * 2) * 38 / 100;
+            int syncW = (contentWidth - gap * 2) * 36 / 100;
+            int closeW = (contentWidth - gap * 2) - addW - syncW;
+
+            Button addBtn = Button.builder(Component.translatable("sypass.gui.button.add"), btn -> {
+                if (this.minecraft != null) {
+                    this.minecraft.setScreen(new EditPasswordScreen(this));
+                }
+            }).bounds(contentX, bottomRowY, addW, 20).build();
+            addRenderableWidget(addBtn);
+
+            Button syncBtn = Button.builder(Component.translatable("sypass.gui.button.sync_cloud"), btn -> handleFullSync())
+                    .bounds(contentX + addW + gap, bottomRowY, syncW, 20).build();
+            addRenderableWidget(syncBtn);
+
+            Button closeBtn = Button.builder(Component.translatable("sypass.gui.button.close"), btn -> onClose())
+                    .bounds(contentX + addW + gap + syncW + gap, bottomRowY, closeW, 20).build();
+            addRenderableWidget(closeBtn);
+        } else {
+            int gap = 6;
+            int addW = (contentWidth - gap) / 2;
+            int closeW = contentWidth - gap - addW;
+
+            Button addBtn = Button.builder(Component.translatable("sypass.gui.button.add"), btn -> {
+                if (this.minecraft != null) {
+                    this.minecraft.setScreen(new EditPasswordScreen(this));
+                }
+            }).bounds(contentX, bottomRowY, addW, 20).build();
+            addRenderableWidget(addBtn);
+
+            Button closeBtn = Button.builder(Component.translatable("sypass.gui.button.close"), btn -> onClose())
+                    .bounds(contentX + addW + gap, bottomRowY, closeW, 20).build();
+            addRenderableWidget(closeBtn);
+        }
+    }
+
+    private void handleFullSync() {
+        if (!BitwardenManager.hasActiveSession()) {
+            setStatusMessage("§c" + Component.translatable("sypass.gui.status.not_logged_in").getString());
+            return;
+        }
+
+        setStatusMessage("§e" + Component.translatable("sypass.gui.status.syncing").getString());
+        BitwardenManager.getExecutor().execute(() -> {
+            BitwardenManager.BwSyncResult pullRes = BitwardenManager.pullFromBitwarden();
+            BitwardenManager.BwSyncResult pushRes = BitwardenManager.pushToBitwarden();
+            if (this.minecraft != null) {
+                this.minecraft.execute(() -> {
+                    setStatusMessage("§a" + Component.translatable("sypass.gui.status.sync_success", pullRes.count(), pushRes.count()).getString());
+                    refreshPasswordList();
+                });
+            }
+        });
+    }
+
+    // ==========================================
+    // Вкладка 2: Bitwarden (BITWARDEN)
+    // ==========================================
+    private void initBitwardenTab(int contentX, int contentWidth) {
+        int formWidth = Math.min(320, contentWidth);
+        int formX = (this.width - formWidth) / 2;
+        int y = 42;
+
+        switch (bwStage) {
+            case CHECKING_STATUS -> {
+                // Візуалізується в render
+            }
+            case CLI_NOT_FOUND -> {
+                int btnW = formWidth;
+                addRenderableWidget(Button.builder(Component.translatable("sypass.gui.bw.button.guide"), btn -> {
+                    if (this.minecraft != null) {
+                        this.minecraft.setScreen(new ConfirmLinkScreen(confirmed -> {
+                            if (confirmed) {
+                                Util.getPlatform().openUri("https://bitwarden.com/help/cli/");
+                            }
+                            this.minecraft.setScreen(this);
+                        }, "https://bitwarden.com/help/cli/", true));
+                    }
+                }).bounds(formX, y + 60, btnW, 20).tooltip(Tooltip.create(Component.translatable("sypass.gui.bw.button.guide.tooltip"))).build());
+
+                addRenderableWidget(Button.builder(Component.translatable("sypass.gui.bw.button.open_folder"), btn -> {
+                    File dir = PlatformHelper.get().getConfigDir().resolve("sypass").toFile();
+                    Util.getPlatform().openFile(dir);
+                }).bounds(formX, y + 84, btnW, 20).tooltip(Tooltip.create(Component.translatable("sypass.gui.bw.button.open_folder.tooltip"))).build());
+
+                addRenderableWidget(Button.builder(Component.translatable("sypass.gui.bw.button.check_again"), btn -> {
+                    BitwardenManager.invalidateStatusCache();
+                    this.bwStage = BwStage.CHECKING_STATUS;
+                    checkBwStatusAsync();
+                }).bounds(formX, y + 108, btnW, 20).build());
+            }
+            case LOGIN -> {
+                this.bwEmailBox = new EditBox(this.font, formX, y + 16, formWidth, 20, Component.translatable("sypass.gui.bw.login.email_placeholder"));
+                this.bwEmailBox.setMaxLength(256);
+                this.bwEmailBox.setHint(Component.translatable("sypass.gui.bw.login.email_placeholder"));
+                addRenderableWidget(this.bwEmailBox);
+
+                this.bwPasswordBox = new EditBox(this.font, formX, y + 54, formWidth, 20, Component.translatable("sypass.gui.bw.login.password_placeholder"));
+                this.bwPasswordBox.setMaxLength(256);
+                this.bwPasswordBox.setHint(Component.translatable("sypass.gui.bw.login.password_placeholder"));
+                this.bwPasswordBox.setFormatter((text, firstCharIndex) -> FormattedCharSequence.forward("•".repeat(text.length()), Style.EMPTY));
+                addRenderableWidget(this.bwPasswordBox);
+
+                this.bwOtpBox = new EditBox(this.font, formX, y + 92, formWidth, 20, Component.translatable("sypass.gui.bw.otp.placeholder"));
+                this.bwOtpBox.setMaxLength(32);
+                this.bwOtpBox.setHint(Component.translatable("sypass.gui.bw.otp.hint"));
+                addRenderableWidget(this.bwOtpBox);
+
+                Button loginBtn = Button.builder(Component.translatable("sypass.gui.bw.login.button_login"), btn -> {
+                    String email = this.bwEmailBox.getValue().trim();
+                    String pass = this.bwPasswordBox.getValue().trim();
+                    String otp = this.bwOtpBox.getValue().trim();
+
+                    if (email.isEmpty() || pass.isEmpty()) {
+                        setStatusMessage("§c" + Component.translatable("sypass.gui.bw.error.empty_credentials").getString());
+                        return;
+                    }
+
+                    btn.active = false;
+                    setStatusMessage("§e" + Component.translatable("sypass.gui.bw.login.logging_in").getString());
+                    BitwardenManager.getExecutor().execute(() -> {
+                        BitwardenManager.BwLoginResponse resp = BitwardenManager.login(email, pass, otp);
+                        if (this.minecraft != null) {
+                            this.minecraft.execute(() -> {
+                                btn.active = true;
+                                setStatusMessage(resp.message());
+                                if (resp.isSuccess()) {
+                                    this.bwStage = BwStage.LOGGED_IN;
+                                    clearWidgets();
+                                    init();
+                                }
+                            });
+                        }
+                    });
+                }).bounds(formX, y + 120, formWidth, 20).build();
+                addRenderableWidget(loginBtn);
+
+                int halfW = (formWidth - 6) / 2;
+                addRenderableWidget(Button.builder(Component.translatable("sypass.gui.bw.login.apikey_tab"), btn -> {
+                    this.bwStage = BwStage.API_KEY;
+                    clearWidgets();
+                    init();
+                }).bounds(formX, y + 144, halfW, 20).build());
+
+                addRenderableWidget(Button.builder(Component.translatable("sypass.gui.bw.login.session_tab"), btn -> {
+                    this.bwStage = BwStage.SESSION_KEY;
+                    clearWidgets();
+                    init();
+                }).bounds(formX + halfW + 6, y + 144, halfW, 20).build());
+            }
+            case API_KEY -> {
+                this.bwClientIdBox = new EditBox(this.font, formX, y + 16, formWidth, 20, Component.translatable("sypass.gui.bw.apikey.client_id"));
+                this.bwClientIdBox.setMaxLength(256);
+                this.bwClientIdBox.setHint(Component.translatable("sypass.gui.bw.apikey.client_id"));
+                addRenderableWidget(this.bwClientIdBox);
+
+                this.bwClientSecretBox = new EditBox(this.font, formX, y + 54, formWidth, 20, Component.translatable("sypass.gui.bw.apikey.client_secret"));
+                this.bwClientSecretBox.setMaxLength(256);
+                this.bwClientSecretBox.setHint(Component.translatable("sypass.gui.bw.apikey.client_secret"));
+                this.bwClientSecretBox.setFormatter((text, firstCharIndex) -> FormattedCharSequence.forward("•".repeat(text.length()), Style.EMPTY));
+                addRenderableWidget(this.bwClientSecretBox);
+
+                this.bwMasterPasswordBox = new EditBox(this.font, formX, y + 92, formWidth, 20, Component.translatable("sypass.gui.bw.login.password_placeholder"));
+                this.bwMasterPasswordBox.setMaxLength(256);
+                this.bwMasterPasswordBox.setHint(Component.translatable("sypass.gui.bw.login.password_placeholder"));
+                this.bwMasterPasswordBox.setFormatter((text, firstCharIndex) -> FormattedCharSequence.forward("•".repeat(text.length()), Style.EMPTY));
+                addRenderableWidget(this.bwMasterPasswordBox);
+
+                addRenderableWidget(Button.builder(Component.translatable("sypass.gui.bw.apikey.login_btn"), btn -> {
+                    String id = this.bwClientIdBox.getValue().trim();
+                    String secret = this.bwClientSecretBox.getValue().trim();
+                    String masterPass = this.bwMasterPasswordBox.getValue().trim();
+
+                    if (id.isEmpty() || secret.isEmpty() || masterPass.isEmpty()) {
+                        setStatusMessage("§c" + Component.translatable("sypass.gui.bw.error.empty_apikey").getString());
+                        return;
+                    }
+
+                    btn.active = false;
+                    setStatusMessage("§e" + Component.translatable("sypass.gui.bw.login.logging_in_apikey").getString());
+                    BitwardenManager.getExecutor().execute(() -> {
+                        BitwardenManager.BwLoginResponse resp = BitwardenManager.loginWithApiKey(id, secret, masterPass);
+                        if (this.minecraft != null) {
+                            this.minecraft.execute(() -> {
+                                btn.active = true;
+                                setStatusMessage(resp.message());
+                                if (resp.isSuccess()) {
+                                    this.bwStage = BwStage.LOGGED_IN;
+                                    clearWidgets();
+                                    init();
+                                }
+                            });
+                        }
+                    });
+                }).bounds(formX, y + 120, formWidth, 20).build());
+
+                addRenderableWidget(Button.builder(Component.translatable("sypass.gui.bw.otp.back"), btn -> {
+                    this.bwStage = BwStage.LOGIN;
+                    clearWidgets();
+                    init();
+                }).bounds(formX, y + 144, formWidth, 20).build());
+            }
+            case SESSION_KEY -> {
+                this.bwSessionKeyBox = new EditBox(this.font, formX, y + 40, formWidth, 20, Component.translatable("sypass.gui.bw.session.placeholder"));
+                this.bwSessionKeyBox.setMaxLength(256);
+                this.bwSessionKeyBox.setHint(Component.translatable("sypass.gui.bw.session.placeholder"));
+                addRenderableWidget(this.bwSessionKeyBox);
+
+                addRenderableWidget(Button.builder(Component.translatable("sypass.gui.bw.session.unlock_btn"), btn -> {
+                    String key = this.bwSessionKeyBox.getValue().trim();
+                    if (key.isEmpty()) {
+                        setStatusMessage("§c" + Component.translatable("sypass.gui.bw.error.empty_session").getString());
+                        return;
+                    }
+
+                    btn.active = false;
+                    setStatusMessage("§e" + Component.translatable("sypass.gui.bw.session.verifying").getString());
+                    BitwardenManager.getExecutor().execute(() -> {
+                        BitwardenManager.BwLoginResponse resp = BitwardenManager.loginWithSessionKey(key);
+                        if (this.minecraft != null) {
+                            this.minecraft.execute(() -> {
+                                btn.active = true;
+                                setStatusMessage(resp.message());
+                                if (resp.isSuccess()) {
+                                    this.bwStage = BwStage.LOGGED_IN;
+                                    clearWidgets();
+                                    init();
+                                }
+                            });
+                        }
+                    });
+                }).bounds(formX, y + 70, formWidth, 20).build());
+
+                addRenderableWidget(Button.builder(Component.translatable("sypass.gui.bw.otp.back"), btn -> {
+                    this.bwStage = BwStage.LOGIN;
+                    clearWidgets();
+                    init();
+                }).bounds(formX, y + 96, formWidth, 20).build());
+            }
+            case LOGGED_IN -> {
+                int btnW = formWidth;
+                int startY = y + 25;
+
+                addRenderableWidget(Button.builder(Component.translatable("sypass.gui.bw.logged.pull"), btn -> {
+                    btn.active = false;
+                    BitwardenManager.getExecutor().execute(() -> {
+                        BitwardenManager.BwSyncResult res = BitwardenManager.pullFromBitwarden();
+                        if (this.minecraft != null) {
+                            this.minecraft.execute(() -> {
+                                btn.active = true;
+                                setStatusMessage(res.message());
+                            });
+                        }
+                    });
+                }).bounds(formX, startY, btnW, 20).build());
+
+                addRenderableWidget(Button.builder(Component.translatable("sypass.gui.bw.logged.push"), btn -> {
+                    btn.active = false;
+                    BitwardenManager.getExecutor().execute(() -> {
+                        BitwardenManager.BwSyncResult res = BitwardenManager.pushToBitwarden();
+                        if (this.minecraft != null) {
+                            this.minecraft.execute(() -> {
+                                btn.active = true;
+                                setStatusMessage(res.message());
+                            });
+                        }
+                    });
+                }).bounds(formX, startY + 24, btnW, 20).build());
+
+                addRenderableWidget(Button.builder(Component.translatable("sypass.gui.bw.logged.full_sync"), btn -> {
+                    btn.active = false;
+                    handleFullSync();
+                    btn.active = true;
+                }).bounds(formX, startY + 48, btnW, 20).build());
+
+                addRenderableWidget(Button.builder(Component.literal("§c" + Component.translatable("sypass.gui.bw.logged.logout").getString()), btn -> {
+                    BitwardenManager.logout();
+                    this.bwStage = BwStage.LOGIN;
+                    this.cachedStatusInfo = null;
+                    setStatusMessage("§e" + Component.translatable("sypass.gui.bw.logout_success").getString());
+                    clearWidgets();
+                    init();
+                }).bounds(formX, startY + 76, btnW, 20).build());
+            }
+        }
+
+        addRenderableWidget(Button.builder(Component.translatable("sypass.gui.button.close"), btn -> onClose())
+                .bounds((this.width - 140) / 2, this.height - 26, 140, 20).build());
+    }
+
+    // ==========================================
+    // Вкладка 3: Налаштування (SETTINGS)
+    // ==========================================
+    private void initSettingsTab(int contentX, int contentWidth) {
+        int cardWidth = Math.min(420, contentWidth);
+        int gap = 8;
+        int colWidth = (cardWidth - gap) / 2;
+        int cardX = (this.width - cardWidth) / 2;
+
+        int totalSettingsH = 158;
+        int startY = Math.max(38, (this.height - totalSettingsH - 30) / 2);
+        int y = startY;
+
+        switch (settingsStage) {
+            case MAIN -> {
+                // Рядок 1: Авто-вхід (ліворуч) та Сповіщення (праворуч)
+                boolean autoLogin = SYPassConfig.isAutoLoginEnabled();
+                Button autoLoginBtn = Button.builder(
+                        Component.translatable("sypass.gui.settings.autologin", autoLogin ? "§a" + Component.translatable("sypass.gui.settings.on").getString() : "§c" + Component.translatable("sypass.gui.settings.off").getString()),
+                        b -> {
+                            boolean newVal = !SYPassConfig.isAutoLoginEnabled();
+                            SYPassConfig.setAutoLoginEnabled(newVal);
+                            b.setMessage(Component.translatable("sypass.gui.settings.autologin", newVal ? "§a" + Component.translatable("sypass.gui.settings.on").getString() : "§c" + Component.translatable("sypass.gui.settings.off").getString()));
+                        }
+                ).bounds(cardX, y, colWidth, 20)
+                 .tooltip(Tooltip.create(Component.translatable("sypass.gui.settings.autologin.tooltip"))).build();
+                addRenderableWidget(autoLoginBtn);
+
+                boolean toasts = SYPassConfig.isToastsEnabled();
+                Button toastsBtn = Button.builder(
+                        Component.translatable("sypass.gui.settings.toasts", toasts ? "§a" + Component.translatable("sypass.gui.settings.on").getString() : "§c" + Component.translatable("sypass.gui.settings.off").getString()),
+                        b -> {
+                            boolean newVal = !SYPassConfig.isToastsEnabled();
+                            SYPassConfig.setToastsEnabled(newVal);
+                            b.setMessage(Component.translatable("sypass.gui.settings.toasts", newVal ? "§a" + Component.translatable("sypass.gui.settings.on").getString() : "§c" + Component.translatable("sypass.gui.settings.off").getString()));
+                        }
+                ).bounds(cardX + colWidth + gap, y, colWidth, 20)
+                 .tooltip(Tooltip.create(Component.translatable("sypass.gui.settings.toasts.tooltip"))).build();
+                addRenderableWidget(toastsBtn);
+
+                y += 24;
+                // Рядок 2: Розумний авто-вхід (ліворуч) та Розумна реєстрація (праворуч)
+                boolean smartLogin = SYPassConfig.isSmartAutoLoginEnabled();
+                Button smartLoginBtn = Button.builder(
+                        Component.translatable("sypass.gui.settings.smart_login", smartLogin ? "§a" + Component.translatable("sypass.gui.settings.on").getString() : "§c" + Component.translatable("sypass.gui.settings.off").getString()),
+                        b -> {
+                            boolean newVal = !SYPassConfig.isSmartAutoLoginEnabled();
+                            SYPassConfig.setSmartAutoLoginEnabled(newVal);
+                            b.setMessage(Component.translatable("sypass.gui.settings.smart_login", newVal ? "§a" + Component.translatable("sypass.gui.settings.on").getString() : "§c" + Component.translatable("sypass.gui.settings.off").getString()));
+                        }
+                ).bounds(cardX, y, colWidth, 20)
+                 .tooltip(Tooltip.create(Component.translatable("sypass.gui.settings.smart_login.tooltip"))).build();
+                addRenderableWidget(smartLoginBtn);
+
+                boolean smartRegister = SYPassConfig.isSmartAutoRegisterEnabled();
+                Button smartRegisterBtn = Button.builder(
+                        Component.translatable("sypass.gui.settings.smart_register", smartRegister ? "§a" + Component.translatable("sypass.gui.settings.on").getString() : "§c" + Component.translatable("sypass.gui.settings.off").getString()),
+                        b -> {
+                            boolean newVal = !SYPassConfig.isSmartAutoRegisterEnabled();
+                            SYPassConfig.setSmartAutoRegisterEnabled(newVal);
+                            b.setMessage(Component.translatable("sypass.gui.settings.smart_register", newVal ? "§a" + Component.translatable("sypass.gui.settings.on").getString() : "§c" + Component.translatable("sypass.gui.settings.off").getString()));
+                        }
+                ).bounds(cardX + colWidth + gap, y, colWidth, 20)
+                 .tooltip(Tooltip.create(Component.translatable("sypass.gui.settings.smart_register.tooltip"))).build();
+                addRenderableWidget(smartRegisterBtn);
+
+                y += 24;
+                // Рядок 3: Захист від перезапису (ліворуч) та Захист чату (праворуч)
+                boolean protectOverwrite = SYPassConfig.isPreventRegisterOverwriteEnabled();
+                Button protectOverwriteBtn = Button.builder(
+                        Component.translatable("sypass.gui.settings.prevent_overwrite", protectOverwrite ? "§a" + Component.translatable("sypass.gui.settings.on").getString() : "§c" + Component.translatable("sypass.gui.settings.off").getString()),
+                        b -> {
+                            boolean newVal = !SYPassConfig.isPreventRegisterOverwriteEnabled();
+                            SYPassConfig.setPreventRegisterOverwriteEnabled(newVal);
+                            b.setMessage(Component.translatable("sypass.gui.settings.prevent_overwrite", newVal ? "§a" + Component.translatable("sypass.gui.settings.on").getString() : "§c" + Component.translatable("sypass.gui.settings.off").getString()));
+                        }
+                ).bounds(cardX, y, colWidth, 20)
+                 .tooltip(Tooltip.create(Component.translatable("sypass.gui.settings.prevent_overwrite.tooltip"))).build();
+                addRenderableWidget(protectOverwriteBtn);
+
+                boolean chatProtect = SYPassConfig.isChatLeakProtectionEnabled();
+                String chatStatusStr = chatProtect ? "§a" + Component.translatable("sypass.gui.settings.on").getString() : "§7" + Component.translatable("sypass.gui.settings.off").getString();
+                Button chatProtectMenuBtn = Button.builder(
+                        Component.translatable("sypass.gui.settings.chat_protect.menu_btn", chatStatusStr),
+                        b -> {
+                            this.settingsStage = SettingsStage.CHAT_PROTECTION;
+                            clearWidgets();
+                            init();
+                        }
+                ).bounds(cardX + colWidth + gap, y, colWidth, 20)
+                 .tooltip(Tooltip.create(Component.translatable("sypass.gui.settings.chat_protect.tooltip"))).build();
+                addRenderableWidget(chatProtectMenuBtn);
+
+                y += 26;
+                // Рядок 4: Числові регулятори (Затримка ліворуч, Довжина пароля праворуч)
+                int dBtnW = (colWidth - 6) / 4;
+
+                addRenderableWidget(Button.builder(Component.literal("-10t"), b -> {
+                    SYPassConfig.setAutoLoginDelayTicks(SYPassConfig.getAutoLoginDelayTicks() - 10);
+                }).bounds(cardX, y + 12, dBtnW, 18).build());
+
+                addRenderableWidget(Button.builder(Component.literal("-5t"), b -> {
+                    SYPassConfig.setAutoLoginDelayTicks(SYPassConfig.getAutoLoginDelayTicks() - 5);
+                }).bounds(cardX + dBtnW + 2, y + 12, dBtnW, 18).build());
+
+                addRenderableWidget(Button.builder(Component.literal("+5t"), b -> {
+                    SYPassConfig.setAutoLoginDelayTicks(SYPassConfig.getAutoLoginDelayTicks() + 5);
+                }).bounds(cardX + (dBtnW + 2) * 2, y + 12, dBtnW, 18).build());
+
+                addRenderableWidget(Button.builder(Component.literal("+10t"), b -> {
+                    SYPassConfig.setAutoLoginDelayTicks(SYPassConfig.getAutoLoginDelayTicks() + 10);
+                }).bounds(cardX + (dBtnW + 2) * 3, y + 12, dBtnW, 18).build());
+
+                int lStartX = cardX + colWidth + gap;
+                addRenderableWidget(Button.builder(Component.literal("-4"), b -> {
+                    SYPassConfig.setDefaultPasswordLength(SYPassConfig.getDefaultPasswordLength() - 4);
+                }).bounds(lStartX, y + 12, dBtnW, 18).build());
+
+                addRenderableWidget(Button.builder(Component.literal("-1"), b -> {
+                    SYPassConfig.setDefaultPasswordLength(SYPassConfig.getDefaultPasswordLength() - 1);
+                }).bounds(lStartX + dBtnW + 2, y + 12, dBtnW, 18).build());
+
+                addRenderableWidget(Button.builder(Component.literal("+1"), b -> {
+                    SYPassConfig.setDefaultPasswordLength(SYPassConfig.getDefaultPasswordLength() + 1);
+                }).bounds(lStartX + (dBtnW + 2) * 2, y + 12, dBtnW, 18).build());
+
+                addRenderableWidget(Button.builder(Component.literal("+4"), b -> {
+                    SYPassConfig.setDefaultPasswordLength(SYPassConfig.getDefaultPasswordLength() + 4);
+                }).bounds(lStartX + (dBtnW + 2) * 3, y + 12, dBtnW, 18).build());
+
+                y += 34;
+                // Рядок 5: Підменю (Резервні копії ліворуч, Bitwarden праворуч)
+                Button backupMenuBtn = Button.builder(
+                        Component.translatable("sypass.gui.settings.backup.menu_btn"),
+                        b -> {
+                            this.settingsStage = SettingsStage.BACKUP;
+                            clearWidgets();
+                            init();
+                        }
+                ).bounds(cardX, y, colWidth, 20)
+                 .tooltip(Tooltip.create(Component.translatable("sypass.gui.settings.backup.menu_btn.tooltip"))).build();
+                addRenderableWidget(backupMenuBtn);
+
+                boolean bwEnabled = SYPassConfig.isBitwardenEnabled();
+                String bwStatusStr = bwEnabled ? "§a" + Component.translatable("sypass.gui.settings.on").getString() : "§7" + Component.translatable("sypass.gui.settings.off").getString();
+                Button bwMenuBtn = Button.builder(
+                        Component.translatable("sypass.gui.settings.bw.menu_btn", bwStatusStr),
+                        b -> {
+                            this.settingsStage = SettingsStage.BITWARDEN;
+                            clearWidgets();
+                            init();
+                        }
+                ).bounds(cardX + colWidth + gap, y, colWidth, 20)
+                 .tooltip(Tooltip.create(Component.translatable("sypass.gui.settings.bw.menu_btn.tooltip"))).build();
+                addRenderableWidget(bwMenuBtn);
+
+                y += 24;
+                // Рядок 6: Відкрити папку config/sypass — ширина точно збігається з 2 колонками вище (cardWidth)
+                Button openFolderBtn = Button.builder(Component.translatable("sypass.gui.bw.button.open_folder"), b -> {
+                    File dir = PlatformHelper.get().getConfigDir().resolve("sypass").toFile();
+                    Util.getPlatform().openFile(dir);
+                }).bounds(cardX, y, cardWidth, 20)
+                  .tooltip(Tooltip.create(Component.translatable("sypass.gui.bw.button.open_folder.tooltip"))).build();
+                addRenderableWidget(openFolderBtn);
+            }
+            case CHAT_PROTECTION -> {
+                boolean chatProtect = SYPassConfig.isChatLeakProtectionEnabled();
+                Button toggleBtn = Button.builder(
+                        Component.translatable("sypass.gui.settings.chat_protect", chatProtect ? "§a" + Component.translatable("sypass.gui.settings.on").getString() : "§c" + Component.translatable("sypass.gui.settings.off").getString()),
+                        b -> {
+                            boolean newVal = !SYPassConfig.isChatLeakProtectionEnabled();
+                            SYPassConfig.setChatLeakProtectionEnabled(newVal);
+                            clearWidgets();
+                            init();
+                        }
+                ).bounds(cardX, y + 25, cardWidth, 20).build();
+                addRenderableWidget(toggleBtn);
+
+                SYPassConfig.ChatProtectionScope scope = SYPassConfig.getChatProtectionScope();
+                Button scopeBtn = Button.builder(
+                        Component.translatable("sypass.gui.settings.chat_scope.mode", Component.translatable(scope.getTranslationKey())),
+                        b -> {
+                            if (!chatProtect) return;
+                            SYPassConfig.ChatProtectionScope newScope = (scope == SYPassConfig.ChatProtectionScope.CURRENT_SERVER)
+                                    ? SYPassConfig.ChatProtectionScope.ALL_SERVERS
+                                    : SYPassConfig.ChatProtectionScope.CURRENT_SERVER;
+                            SYPassConfig.setChatProtectionScope(newScope);
+                            clearWidgets();
+                            init();
+                        }
+                ).bounds(cardX, y + 65, cardWidth, 20).build();
+                scopeBtn.active = chatProtect;
+                addRenderableWidget(scopeBtn);
+
+                addRenderableWidget(Button.builder(Component.translatable("sypass.gui.bw.otp.back"), b -> {
+                    this.settingsStage = SettingsStage.MAIN;
+                    clearWidgets();
+                    init();
+                }).bounds(cardX, y + 120, cardWidth, 20).build());
+            }
+            case BACKUP -> {
+                this.backupPassBox = new EditBox(this.font, cardX, y + 25, cardWidth, 20, Component.translatable("sypass.gui.settings.backup.pass_placeholder"));
+                this.backupPassBox.setMaxLength(128);
+                this.backupPassBox.setHint(Component.translatable("sypass.gui.settings.backup.pass_placeholder"));
+                if (!this.exportAsCsv) {
+                    addRenderableWidget(this.backupPassBox);
+                }
+
+                Component formatLabel = exportAsCsv
+                        ? Component.translatable("sypass.gui.settings.backup.csv_checkbox")
+                        : Component.translatable("sypass.gui.settings.backup.format_json");
+
+                Button formatBtn = Button.builder(formatLabel, b -> {
+                    this.exportAsCsv = !this.exportAsCsv;
+                    clearWidgets();
+                    init();
+                }).bounds(cardX, y + 50, cardWidth, 20).build();
+                addRenderableWidget(formatBtn);
+
+                int btnW = (cardWidth - 8) / 3;
+                addRenderableWidget(Button.builder(Component.translatable("sypass.gui.settings.backup.export"), b -> {
+                    if (this.exportAsCsv) {
+                        String file = PasswordManager.exportBitwardenCsv();
+                        if (file != null) setStatusMessage("§a" + Component.translatable("sypass.gui.settings.backup.exported_csv", file).getString());
+                    } else {
+                        String pass = (this.backupPassBox != null) ? this.backupPassBox.getValue().trim() : "";
+                        String file = PasswordManager.exportBackup(pass);
+                        if (file != null) setStatusMessage("§a" + Component.translatable("sypass.gui.settings.backup.exported", file).getString());
+                    }
+                }).bounds(cardX, y + 75, btnW, 20).build());
+
+                addRenderableWidget(Button.builder(Component.translatable("sypass.gui.settings.backup.import"), b -> {
+                    int imported = this.exportAsCsv ? PasswordManager.importLatestCsvBackup() : PasswordManager.importLatestBackup(this.backupPassBox != null ? this.backupPassBox.getValue().trim() : null);
+                    if (imported >= 0) {
+                        setStatusMessage("§a" + Component.translatable("sypass.gui.settings.backup.imported", imported).getString());
+                    } else {
+                        setStatusMessage("§c" + Component.translatable("sypass.gui.settings.backup.import_failed").getString());
+                    }
+                }).bounds(cardX + btnW + 4, y + 75, btnW, 20).build());
+
+                addRenderableWidget(Button.builder(Component.translatable("sypass.gui.settings.backup.open_folder"), b -> {
+                    File dir = PlatformHelper.get().getConfigDir().resolve("sypass").resolve("backups").toFile();
+                    if (!dir.exists()) dir.mkdirs();
+                    Util.getPlatform().openFile(dir);
+                }).bounds(cardX + (btnW + 4) * 2, y + 75, btnW, 20).build());
+
+                addRenderableWidget(Button.builder(Component.translatable("sypass.gui.bw.otp.back"), b -> {
+                    this.settingsStage = SettingsStage.MAIN;
+                    clearWidgets();
+                    init();
+                }).bounds(cardX, y + 105, cardWidth, 20).build());
+            }
+            case BITWARDEN -> {
+                boolean bwEn = SYPassConfig.isBitwardenEnabled();
+                Button enableBtn = Button.builder(
+                        Component.translatable("sypass.gui.settings.enable_bw", bwEn ? "§a" + Component.translatable("sypass.gui.settings.on").getString() : "§c" + Component.translatable("sypass.gui.settings.off").getString()),
+                        b -> {
+                            boolean newVal = !SYPassConfig.isBitwardenEnabled();
+                            SYPassConfig.setBitwardenEnabled(newVal);
+                            clearWidgets();
+                            init();
+                        }
+                ).bounds(cardX, y + 25, cardWidth, 20).build();
+                addRenderableWidget(enableBtn);
+
+                if (bwEn) {
+                    boolean autoSync = SYPassConfig.isAutoSyncEnabled();
+                    Button autoSyncBtn = Button.builder(
+                            Component.translatable("sypass.gui.settings.autosync", autoSync ? "§a" + Component.translatable("sypass.gui.settings.on").getString() : "§c" + Component.translatable("sypass.gui.settings.off").getString()),
+                            b -> {
+                                boolean newVal = !SYPassConfig.isAutoSyncEnabled();
+                                SYPassConfig.setAutoSyncEnabled(newVal);
+                                b.setMessage(Component.translatable("sypass.gui.settings.autosync", newVal ? "§a" + Component.translatable("sypass.gui.settings.on").getString() : "§c" + Component.translatable("sypass.gui.settings.off").getString()));
+                            }
+                    ).bounds(cardX, y + 50, cardWidth, 20).build();
+                    addRenderableWidget(autoSyncBtn);
+
+                    EditBox serverUrlBox = new EditBox(this.font, cardX, y + 85, cardWidth - 28, 20, Component.translatable("sypass.gui.settings.server_url"));
+                    serverUrlBox.setMaxLength(256);
+                    serverUrlBox.setValue(SYPassConfig.getCustomServerUrl());
+                    serverUrlBox.setHint(Component.literal("https://vault.bitwarden.com"));
+                    addRenderableWidget(serverUrlBox);
+
+                    Button saveUrlBtn = Button.builder(Component.literal("✔"), b -> {
+                        String url = serverUrlBox.getValue().trim();
+                        SYPassConfig.setCustomServerUrl(url);
+                        BitwardenManager.configureServer(url);
+                        setStatusMessage("§a" + Component.translatable("sypass.gui.settings.server_url.saved").getString());
+                    }).bounds(cardX + cardWidth - 24, y + 85, 24, 20).build();
+                    addRenderableWidget(saveUrlBtn);
+                }
+
+                addRenderableWidget(Button.builder(Component.translatable("sypass.gui.bw.otp.back"), b -> {
+                    this.settingsStage = SettingsStage.MAIN;
+                    clearWidgets();
+                    init();
+                }).bounds(cardX, y + 120, cardWidth, 20).build());
+            }
+        }
+
+        addRenderableWidget(Button.builder(Component.translatable("sypass.gui.button.close"), btn -> onClose())
+                .bounds((this.width - 140) / 2, this.height - 26, 140, 20).build());
+    }
+
+    @Override
+    public void render(GuiGraphics guiGraphics, int mouseX, int mouseY, float partialTick) {
+        super.render(guiGraphics, mouseX, mouseY, partialTick);
+
+        int contentWidth = Math.min(440, this.width - 32);
+
+        // Порожній стан на вкладці паролів
+        if (activeTab == Tab.LOCAL_PASSWORDS && PasswordManager.getTotalCount() == 0) {
+            int emptyY = this.height / 2 - 16;
+            guiGraphics.drawCenteredString(this.font, Component.translatable(onlyFavorites ? "sypass.gui.empty.favorites" : "sypass.gui.empty.title").withStyle(ChatFormatting.GOLD, ChatFormatting.BOLD), this.width / 2, emptyY, 0xFFFFFF);
+            guiGraphics.drawCenteredString(this.font, Component.translatable(onlyFavorites ? "sypass.gui.empty.favorites.desc" : "sypass.gui.empty.desc").withStyle(ChatFormatting.GRAY), this.width / 2, emptyY + 12, 0xAAAAAA);
+        }
+
+        // Текстові підказки в Settings
+        if (activeTab == Tab.SETTINGS) {
+            int cardWidth = Math.min(420, contentWidth);
+            int gap = 8;
+            int colWidth = (cardWidth - gap) / 2;
+            int cardX = (this.width - cardWidth) / 2;
+
+            int totalSettingsH = 158;
+            int startY = Math.max(38, (this.height - totalSettingsH - 30) / 2);
+
+            if (settingsStage == SettingsStage.MAIN) {
+                int delayTicks = SYPassConfig.getAutoLoginDelayTicks();
+                float delaySec = delayTicks / 20.0f;
+                guiGraphics.drawString(this.font, Component.translatable("sypass.gui.settings.delay", delayTicks, String.format(Locale.ROOT, "%.1f", delaySec)), cardX, startY + 76, 0xCCCCCC, true);
+
+                int curLen = SYPassConfig.getDefaultPasswordLength();
+                guiGraphics.drawString(this.font, Component.translatable("sypass.gui.settings.pass_len", curLen), cardX + colWidth + gap, startY + 76, 0xCCCCCC, true);
+            } else if (settingsStage == SettingsStage.CHAT_PROTECTION) {
+                guiGraphics.drawCenteredString(this.font, Component.translatable("sypass.gui.settings.chat_protect.title").withStyle(ChatFormatting.GOLD, ChatFormatting.BOLD), this.width / 2, startY + 4, 0xFFFFFF);
+                SYPassConfig.ChatProtectionScope scope = SYPassConfig.getChatProtectionScope();
+                String hintKey = (scope == SYPassConfig.ChatProtectionScope.CURRENT_SERVER)
+                        ? "sypass.gui.settings.chat_scope.current_hint"
+                        : "sypass.gui.settings.chat_scope.all_hint";
+                guiGraphics.drawWordWrap(this.font, Component.translatable(hintKey).withStyle(ChatFormatting.GRAY), cardX, startY + 94, cardWidth, 0x888888);
+            } else if (settingsStage == SettingsStage.BITWARDEN && SYPassConfig.isBitwardenEnabled()) {
+                guiGraphics.drawString(this.font, Component.translatable("sypass.gui.settings.server_url"), cardX, startY + 74, 0xCCCCCC, true);
+            }
+        }
+
+        // Bitwarden заголовки (читаються суто з пам'яті / кешу без запуску процесів)
+        if (activeTab == Tab.BITWARDEN) {
+            int formWidth = Math.min(320, contentWidth);
+            int formX = (this.width - formWidth) / 2;
+            int y = 42;
+
+            switch (bwStage) {
+                case CHECKING_STATUS -> {
+                    guiGraphics.drawCenteredString(this.font, Component.translatable("sypass.gui.bw.checking_status").withStyle(ChatFormatting.YELLOW), this.width / 2, this.height / 2 - 10, 0xFFFFFF);
+                }
+                case CLI_NOT_FOUND -> {
+                    guiGraphics.drawCenteredString(this.font, Component.translatable("sypass.gui.bw.not_found.title").withStyle(ChatFormatting.RED, ChatFormatting.BOLD), this.width / 2, y, 0xFF5555);
+                    guiGraphics.drawWordWrap(this.font, Component.translatable("sypass.gui.bw.not_found.desc1").withStyle(ChatFormatting.GRAY), formX, y + 14, formWidth, 0xAAAAAA);
+                }
+                case LOGIN -> {
+                    guiGraphics.drawCenteredString(this.font, Component.translatable("sypass.gui.bw.login.title").withStyle(ChatFormatting.GOLD, ChatFormatting.BOLD), this.width / 2, y, 0xFFFFFF);
+                }
+                case API_KEY -> {
+                    guiGraphics.drawCenteredString(this.font, Component.translatable("sypass.gui.bw.apikey.title").withStyle(ChatFormatting.GOLD, ChatFormatting.BOLD), this.width / 2, y, 0xFFFFFF);
+                }
+                case SESSION_KEY -> {
+                    guiGraphics.drawCenteredString(this.font, Component.translatable("sypass.gui.bw.session.title").withStyle(ChatFormatting.GOLD, ChatFormatting.BOLD), this.width / 2, y, 0xFFFFFF);
+                    guiGraphics.drawWordWrap(this.font, Component.translatable("sypass.gui.bw.session.desc2").withStyle(ChatFormatting.GREEN), formX, y + 14, formWidth, 0x55FF55);
+                }
+                case LOGGED_IN -> {
+                    String userEmail = (cachedStatusInfo != null && cachedStatusInfo.userEmail() != null && !cachedStatusInfo.userEmail().isBlank())
+                            ? cachedStatusInfo.userEmail()
+                            : "Bitwarden Vault";
+
+                    guiGraphics.drawCenteredString(this.font, Component.translatable("sypass.gui.bw.logged.connected").withStyle(ChatFormatting.GREEN, ChatFormatting.BOLD), this.width / 2, y, 0x55FF55);
+                    guiGraphics.drawCenteredString(this.font, Component.translatable("sypass.gui.bw.logged.account", BitwardenManager.maskEmail(userEmail)).withStyle(ChatFormatting.WHITE), this.width / 2, y + 12, 0xFFFFFF);
+                }
+            }
+        }
+
+        // Статусне повідомлення внизу екрана
+        if (!statusMessage.isEmpty()) {
+            guiGraphics.drawCenteredString(this.font, Component.literal(this.statusMessage), this.width / 2, this.height - 40, 0x55FF55);
+        }
+    }
+
+    @Override
+    public void renderBackground(GuiGraphics guiGraphics, int mouseX, int mouseY, float partialTick) {
+        super.renderBackground(guiGraphics, mouseX, mouseY, partialTick);
+
+        int contentWidth = Math.min(440, this.width - 32);
+        int panelWidth = contentWidth + 16;
+        int panelX = (this.width - panelWidth) / 2;
+
+        guiGraphics.fill(panelX, 4, panelX + panelWidth, this.height - 4, 0xD0101010);
+        guiGraphics.renderOutline(panelX, 4, panelWidth, this.height - 8, 0xFF3C3C3C);
+    }
+
+    @Override
+    public void onClose() {
+        if (this.minecraft != null) {
+            this.minecraft.setScreen(this.parent);
+        }
+    }
+
+    @Override
+    public boolean isPauseScreen() {
+        return false;
+    }
+
+    // ==========================================
+    // Внутрішній віджет списку паролів (Vanilla)
+    // ==========================================
+    public static class PasswordListWidget extends ContainerObjectSelectionList<PasswordListWidget.PasswordEntry> {
+        private final SYPassScreen parentScreen;
+        private final int fixedRowWidth;
+
+        public PasswordListWidget(Minecraft minecraft, int width, int height, int y, int itemHeight, int fixedRowWidth, SYPassScreen parentScreen) {
+            super(minecraft, width, height, y, itemHeight);
+            this.parentScreen = parentScreen;
+            this.fixedRowWidth = fixedRowWidth;
+        }
+
+        public void refresh(String query, SortMode sortMode, boolean onlyFavorites) {
+            this.clearEntries();
+            Map<String, Map<String, PasswordManager.AccountData>> allData = PasswordManager.getAllData();
+            List<PasswordEntryData> dataList = new ArrayList<>();
+
+            String lowerQuery = (query != null) ? query.toLowerCase(Locale.ROOT).trim() : "";
+
+            for (Map.Entry<String, Map<String, PasswordManager.AccountData>> sEntry : allData.entrySet()) {
+                String serverIp = sEntry.getKey();
+                for (Map.Entry<String, PasswordManager.AccountData> aEntry : sEntry.getValue().entrySet()) {
+                    String username = aEntry.getKey();
+                    PasswordManager.AccountData acc = aEntry.getValue();
+
+                    if (onlyFavorites && !acc.isFavorite()) {
+                        continue;
+                    }
+
+                    if (!lowerQuery.isEmpty() && !serverIp.toLowerCase(Locale.ROOT).contains(lowerQuery)
+                            && !username.toLowerCase(Locale.ROOT).contains(lowerQuery)
+                            && !acc.command().toLowerCase(Locale.ROOT).contains(lowerQuery)) {
+                        continue;
+                    }
+
+                    dataList.add(new PasswordEntryData(serverIp, username, acc));
+                }
+            }
+
+            switch (sortMode) {
+                case FAVORITES_FIRST -> dataList.sort((a, b) -> {
+                    if (a.data.isFavorite() != b.data.isFavorite()) {
+                        return b.data.isFavorite() ? 1 : -1;
+                    }
+                    int sComp = a.serverIp.compareToIgnoreCase(b.serverIp);
+                    if (sComp != 0) return sComp;
+                    return a.username.compareToIgnoreCase(b.username);
+                });
+                case ALPHABETICAL -> dataList.sort((a, b) -> {
+                    int sComp = a.serverIp.compareToIgnoreCase(b.serverIp);
+                    if (sComp != 0) return sComp;
+                    return a.username.compareToIgnoreCase(b.username);
+                });
+                case RECENT -> dataList.sort((a, b) -> Long.compare(b.data.lastUsed(), a.data.lastUsed()));
+            }
+
+            for (PasswordEntryData item : dataList) {
+                this.addEntry(new PasswordEntry(this.parentScreen, item.serverIp, item.username, item.data));
+            }
+        }
+
+        @Override
+        public int getRowWidth() {
+            return this.fixedRowWidth;
+        }
+
+        @Override
+        protected int getScrollbarPosition() {
+            return (this.width + getRowWidth()) / 2 + 4;
+        }
+
+        private record PasswordEntryData(String serverIp, String username, PasswordManager.AccountData data) {}
+
+        public static class PasswordEntry extends ContainerObjectSelectionList.Entry<PasswordEntry> {
+            private final SYPassScreen screen;
+            private final String serverIp;
+            private final String username;
+            private final PasswordManager.AccountData data;
+            private final String key;
+
+            private final List<AbstractWidget> children = new ArrayList<>();
+            private final Button favBtn;
+            private final Button copyBtn;
+            private final Button toggleEyeBtn;
+            private final Button editBtn;
+            private Button deleteBwBtn = null;
+            private final Button deleteBtn;
+
+            public PasswordEntry(SYPassScreen screen, String serverIp, String username, PasswordManager.AccountData data) {
+                this.screen = screen;
+                this.serverIp = serverIp;
+                this.username = username;
+                this.data = data;
+                this.key = serverIp + ":::" + username;
+
+                boolean isRevealed = screen.revealedPasswords.contains(key);
+                boolean canDeleteFromBw = SYPassConfig.isBitwardenEnabled() && data.isSynced() && BitwardenManager.hasActiveSession();
+
+                // 1. Кнопка Обране (★)
+                this.favBtn = Button.builder(Component.literal(data.isFavorite() ? "§e★" : "§7☆"), btn -> {
+                    PasswordManager.toggleFavorite(serverIp, username);
+                    screen.refreshPasswordList();
+                }).bounds(0, 0, 20, 20)
+                  .tooltip(Tooltip.create(Component.translatable(data.isFavorite() ? "sypass.gui.button.unfavorite.tooltip" : "sypass.gui.button.favorite.tooltip")))
+                  .build();
+                children.add(favBtn);
+
+                // 2. Кнопка Копіювати (📋)
+                this.copyBtn = Button.builder(Component.literal("📋"), btn -> {
+                    PasswordManager.updateLastUsed(serverIp, username);
+                    PlatformHelper.get().copyToClipboard(data.password());
+                    screen.setStatusMessage(Component.translatable("sypass.gui.status.copied", username).getString());
+                }).bounds(0, 0, 20, 20)
+                  .tooltip(Tooltip.create(Component.translatable("sypass.gui.button.copy.tooltip")))
+                  .build();
+                children.add(copyBtn);
+
+                // 3. Кнопка Показати/Сховати пароль (●/○)
+                this.toggleEyeBtn = Button.builder(Component.literal(isRevealed ? "§a●" : "§7○"), btn -> {
+                    if (screen.revealedPasswords.contains(key)) {
+                        screen.revealedPasswords.remove(key);
+                        btn.setMessage(Component.literal("§7○"));
+                        btn.setTooltip(Tooltip.create(Component.translatable("sypass.gui.button.show")));
+                    } else {
+                        screen.revealedPasswords.add(key);
+                        btn.setMessage(Component.literal("§a●"));
+                        btn.setTooltip(Tooltip.create(Component.translatable("sypass.gui.button.hide")));
+                    }
+                }).bounds(0, 0, 20, 20)
+                  .tooltip(Tooltip.create(Component.translatable(isRevealed ? "sypass.gui.button.hide" : "sypass.gui.button.show")))
+                  .build();
+                children.add(toggleEyeBtn);
+
+                // 4. Кнопка Редагувати (✎)
+                this.editBtn = Button.builder(Component.literal("✎"), btn -> {
+                    if (screen.minecraft != null) {
+                        screen.minecraft.setScreen(new EditPasswordScreen(screen, serverIp, username, data.password(), data.command(), data.isSynced()));
+                    }
+                }).bounds(0, 0, 20, 20)
+                  .tooltip(Tooltip.create(Component.translatable("sypass.gui.button.edit.tooltip")))
+                  .build();
+                children.add(editBtn);
+
+                // 5. Кнопка видалення лише з Bitwarden (якщо синхронізовано)
+                if (canDeleteFromBw) {
+                    boolean isPendingBw = key.equals(screen.pendingBwDeleteKey);
+                    this.deleteBwBtn = Button.builder(Component.literal(isPendingBw ? "§4✔?" : "§c☁-"), btn -> {
+                        if (key.equals(screen.pendingBwDeleteKey)) {
+                            screen.pendingBwDeleteKey = null;
+                            BitwardenManager.deleteFromBitwardenOnlyAsync(serverIp, username, data.remoteId());
+                            screen.setStatusMessage(Component.translatable("sypass.gui.status.deleted_bw", username, serverIp).getString());
+                            screen.refreshPasswordList();
+                        } else {
+                            screen.pendingBwDeleteKey = key;
+                            screen.pendingDeleteKey = null;
+                            btn.setMessage(Component.literal("§4✔?"));
+                            btn.setTooltip(Tooltip.create(Component.translatable("sypass.gui.button.delete_bw.confirm")));
+                        }
+                    }).bounds(0, 0, 22, 20)
+                      .tooltip(Tooltip.create(Component.translatable(isPendingBw ? "sypass.gui.button.delete_bw.confirm" : "sypass.gui.button.delete_bw.tooltip")))
+                      .build();
+                    children.add(deleteBwBtn);
+                }
+
+                // 6. Кнопка Видалити локальний запис (✖)
+                boolean isPendingDel = key.equals(screen.pendingDeleteKey);
+                this.deleteBtn = Button.builder(Component.literal(isPendingDel ? "§4✔?" : "§c✖"), btn -> {
+                    if (key.equals(screen.pendingDeleteKey)) {
+                        screen.pendingDeleteKey = null;
+                        screen.pendingBwDeleteKey = null;
+                        PasswordManager.removePassword(serverIp, username);
+                        if (data.isSynced() && SYPassConfig.isAutoSyncEnabled() && BitwardenManager.hasActiveSession()) {
+                            BitwardenManager.deleteSingleItemAsync(serverIp, username, data.remoteId());
+                        }
+                        screen.setStatusMessage(Component.translatable("sypass.gui.status.deleted", username, serverIp).getString());
+                        screen.refreshPasswordList();
+                    } else {
+                        screen.pendingDeleteKey = key;
+                        screen.pendingBwDeleteKey = null;
+                        btn.setMessage(Component.literal("§4✔?"));
+                        btn.setTooltip(Tooltip.create(Component.translatable("sypass.gui.button.delete.confirm")));
+                    }
+                }).bounds(0, 0, 20, 20)
+                  .tooltip(Tooltip.create(Component.translatable(isPendingDel ? "sypass.gui.button.delete.confirm" : "sypass.gui.button.delete.tooltip")))
+                  .build();
+                children.add(deleteBtn);
+            }
+
+            @Override
+            public void render(GuiGraphics guiGraphics, int index, int top, int left, int width, int height, int mouseX, int mouseY, boolean hovering, float partialTick) {
+                Minecraft mc = Minecraft.getInstance();
+                String currentUser = (mc.getUser() != null) ? mc.getUser().getName() : null;
+                boolean isActiveAccount = currentUser != null && currentUser.equalsIgnoreCase(username);
+
+                int cardY = top + 2;
+                int cardH = 42;
+
+                // Фон картки (Surface.PANEL)
+                guiGraphics.fill(left, cardY, left + width, cardY + cardH, isActiveAccount ? 0xC0182818 : 0xC01C1C1C);
+                guiGraphics.renderOutline(left, cardY, width, cardH, isActiveAccount ? 0x8855FF55 : 0xFF353535);
+
+                // 1. Іконка сервера 24x24, вертикально центрована в 42px картці (cardY + 9)
+                ResourceLocation icon = ServerIconManager.getServerIcon(serverIp);
+                guiGraphics.blit(icon, left + 6, cardY + 9, 24, 24, 0.0F, 0.0F, 64, 64, 64, 64);
+
+                Font font = mc.font;
+                int textX = left + 36;
+
+                // Рядок 1: Сервер (із хмаринкою якщо синхронізовано)
+                String cloudBadge = SYPassConfig.isBitwardenEnabled() ? (data.isSynced() ? "§a☁ " : "§7☁ ") : "";
+                String serverTitle = cloudBadge + (data.isFavorite() ? "§e★ " : "") + "§6§l" + serverIp;
+                guiGraphics.drawString(font, Component.literal(serverTitle), textX, cardY + 5, 0xFFFFFF, true);
+
+                // Рядок 2: Нікнейм та Пароль
+                boolean isRevealed = screen.revealedPasswords.contains(key);
+                String userTitle = isActiveAccount ? "§a§l" + username : "§e" + username;
+                String passTitle = isRevealed ? " §b" + data.password() : " §7••••••••";
+                guiGraphics.drawString(font, Component.literal(userTitle + passTitle), textX, cardY + 16, 0xFFFFFF, true);
+
+                // Рядок 3: Команда авторизації (/login) — вільне розміщення з відступом 6px від низу
+                guiGraphics.drawString(font, Component.literal("§8" + data.command()), textX, cardY + 27, 0x888888, true);
+
+                // Позиціонування кнопок праворуч (вертикально центровані в 42px: cardY + 11)
+                int btnY = cardY + 11;
+                int totalBtnWidth = (children.size() * 22);
+                int btnX = left + width - totalBtnWidth - 4;
+
+                for (AbstractWidget widget : children) {
+                    widget.setX(btnX);
+                    widget.setY(btnY);
+                    widget.render(guiGraphics, mouseX, mouseY, partialTick);
+                    btnX += widget.getWidth() + 2;
+                }
+            }
+
+            @Override
+            public List<? extends GuiEventListener> children() {
+                return this.children;
+            }
+
+            @Override
+            public List<? extends NarratableEntry> narratables() {
+                return this.children;
+            }
+        }
+    }
+}

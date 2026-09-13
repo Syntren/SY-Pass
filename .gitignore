@@ -43,6 +43,13 @@ replay_*.log
 .stonecutter/
 *.jar
 
+# sypass sensitive vault & keys safeguard
+*.key
+*.key.*
+sypass.json
+sypass.key
+config/sypass/
+
 # tools & caches
 .architectury-transformer/
 graphify-out/

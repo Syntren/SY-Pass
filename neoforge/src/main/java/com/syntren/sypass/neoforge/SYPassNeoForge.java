@@ -11,18 +11,18 @@ import net.minecraft.ChatFormatting;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ServerData;
-import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.network.chat.Component;
 import net.neoforged.api.distmarker.Dist;
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.ModContainer;
-import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.fml.common.Mod;
 import net.neoforged.neoforge.client.event.*;
 import net.neoforged.neoforge.client.gui.IConfigScreenFactory;
 import net.neoforged.neoforge.common.NeoForge;
 import org.lwjgl.glfw.GLFW;
+
+import java.util.Objects;
 
 @Mod(value = "sypass", dist = Dist.CLIENT)
 public class SYPassNeoForge {
@@ -74,8 +74,16 @@ public class SYPassNeoForge {
     public void onRegisterClientCommands(RegisterClientCommandsEvent event) {
         event.getDispatcher().register(SYPassCommands.buildCommandTree(
                 source -> Minecraft.getInstance(),
-                (source, msg) -> source.sendSuccess(() -> msg, false),
-                CommandSourceStack::sendFailure
+                (source, msg) -> {
+                    if (source != null && msg != null) {
+                        source.sendSuccess(() -> msg, false);
+                    }
+                },
+                (source, msg) -> {
+                    if (source != null && msg != null) {
+                        source.sendFailure(msg);
+                    }
+                }
         ));
     }
 
@@ -129,6 +137,7 @@ public class SYPassNeoForge {
         AutoLoginHandler.onIncomingMessage(event.getMessage().getString(), Minecraft.getInstance());
     }
 
+    @SuppressWarnings("null")
     @SubscribeEvent
     public void onClientChat(ClientChatEvent event) {
         if (!SYPassConfig.isChatLeakProtectionEnabled()) return;
@@ -137,10 +146,11 @@ public class SYPassNeoForge {
         if (message == null || message.isBlank()) return;
 
         Minecraft client = Minecraft.getInstance();
-        if (client.player == null) return;
+        var player = client.player;
+        if (player == null) return;
 
         ServerData server = client.getCurrentServer();
-        String serverAddress = (server != null) ? server.ip : "";
+        String serverAddress = (server != null && server.ip != null) ? server.ip : "";
 
         boolean leaks = ChatProtectionMatcher.checkMessageLeaks(
                 message,
@@ -153,10 +163,8 @@ public class SYPassNeoForge {
             String msgKey = (SYPassConfig.getChatProtectionScope() == SYPassConfig.ChatProtectionScope.ALL_SERVERS)
                     ? "sypass.chat.blocked_leak_all"
                     : "sypass.chat.blocked_leak";
-            client.player.displayClientMessage(
-                    Component.translatable(msgKey).withStyle(ChatFormatting.RED),
-                    false
-            );
+            Component chatMessage = Component.translatable(msgKey).withStyle(ChatFormatting.RED);
+            player.displayClientMessage(Objects.requireNonNull(chatMessage), false);
         }
     }
 }

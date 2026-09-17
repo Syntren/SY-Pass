@@ -5,7 +5,6 @@ import com.syntren.sypass.platform.PlatformHelper;
 import com.syntren.sypass.storage.BitwardenManager;
 import com.syntren.sypass.storage.PasswordManager;
 import com.syntren.sypass.util.PasswordGenerator;
-import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.Checkbox;

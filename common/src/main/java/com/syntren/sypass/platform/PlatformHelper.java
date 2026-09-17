@@ -30,7 +30,7 @@ public interface PlatformHelper {
      */
     PlatformHelper INSTANCE = ServiceLoader.load(PlatformHelper.class)
             .findFirst()
-            .orElseThrow(() -> new IllegalStateException("[SY-Pass] Не знайдено реалізації PlatformHelper через ServiceLoader!"));
+            .orElseThrow(() -> new IllegalStateException("[SY-Pass] No PlatformHelper implementation found via ServiceLoader!"));
 
     static PlatformHelper get() {
         return INSTANCE;

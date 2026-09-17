@@ -4,7 +4,6 @@ import com.syntren.sypass.config.SYPassConfig;
 import com.syntren.sypass.platform.PlatformHelper;
 import com.syntren.sypass.storage.BitwardenManager;
 import com.syntren.sypass.storage.PasswordManager;
-import com.syntren.sypass.util.PasswordGenerator;
 import net.minecraft.ChatFormatting;
 import net.minecraft.Util;
 import net.minecraft.client.Minecraft;
@@ -1019,7 +1018,7 @@ public class SYPassScreen extends Screen {
                 EditBox serverUrlBox = new EditBox(this.font, cardX, y + 85, cardWidth - 28, 20, Component.translatable("sypass.gui.settings.server_url"));
                 serverUrlBox.setMaxLength(256);
                 serverUrlBox.setValue(SYPassConfig.getCustomServerUrl());
-                serverUrlBox.setHint(Component.literal("https://vault.bitwarden.com"));
+                serverUrlBox.setHint(Component.translatable("sypass.gui.settings.server_url.placeholder"));
                 serverUrlBox.setEditable(bwEn);
                 serverUrlBox.setTextColor(bwEn ? 0xFFFFFF : 0x777777);
                 addRenderableWidget(serverUrlBox);
@@ -1127,7 +1126,7 @@ public class SYPassScreen extends Screen {
                 case LOGGED_IN -> {
                     String userEmail = (cachedStatusInfo != null && cachedStatusInfo.userEmail() != null && !cachedStatusInfo.userEmail().isBlank())
                             ? cachedStatusInfo.userEmail()
-                            : "Bitwarden Vault";
+                            : Component.translatable("sypass.gui.tab.bitwarden").getString();
 
                     guiGraphics.drawCenteredString(this.font, Component.translatable("sypass.gui.bw.logged.connected").withStyle(ChatFormatting.GREEN, ChatFormatting.BOLD), this.width / 2, y, 0x55FF55);
                     guiGraphics.drawCenteredString(this.font, Component.translatable("sypass.gui.bw.logged.account", BitwardenManager.maskEmail(userEmail)).withStyle(ChatFormatting.WHITE), this.width / 2, y + 12, 0xFFFFFF);

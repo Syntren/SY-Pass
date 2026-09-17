@@ -137,7 +137,7 @@ public class SYPassNeoForge {
         AutoLoginHandler.onIncomingMessage(event.getMessage().getString(), Minecraft.getInstance());
     }
 
-    @SuppressWarnings("null")
+    @SuppressWarnings("all")
     @SubscribeEvent
     public void onClientChat(ClientChatEvent event) {
         if (!SYPassConfig.isChatLeakProtectionEnabled()) return;

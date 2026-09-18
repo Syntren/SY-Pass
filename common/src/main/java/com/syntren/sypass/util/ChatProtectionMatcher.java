@@ -26,20 +26,31 @@ public class ChatProtectionMatcher {
 
         void addWord(String word) {
             if (word == null || word.isBlank()) return;
-            String clean = word.trim();
-            if (clean.length() < 3) {
-                shortPasswords.add(clean);
+            addWord(word.toCharArray());
+        }
+
+        void addWord(char[] word) {
+            if (word == null || word.length == 0) return;
+            int start = 0;
+            while (start < word.length && Character.isWhitespace(word[start])) start++;
+            int end = word.length;
+            while (end > start && Character.isWhitespace(word[end - 1])) end--;
+            int len = end - start;
+            if (len < 3) {
+                if (len > 0) {
+                    shortPasswords.add(new String(word, start, len));
+                }
                 return;
             }
 
             hasPatterns = true;
-            if (clean.length() < minLength) {
-                minLength = clean.length();
+            if (len < minLength) {
+                minLength = len;
             }
 
             Node curr = root;
-            for (int i = 0; i < clean.length(); i++) {
-                char c = clean.charAt(i);
+            for (int i = start; i < end; i++) {
+                char c = word[i];
                 curr = curr.children.computeIfAbsent(c, k -> new Node());
             }
             curr.isEndOfWord = true;
@@ -121,11 +132,7 @@ public class ChatProtectionMatcher {
                 synchronized (ChatProtectionMatcher.class) {
                     if (allServersCache == null) {
                         Automaton newAuto = new Automaton();
-                        for (Map<String, PasswordManager.AccountData> accs : PasswordManager.getAllData().values()) {
-                            for (PasswordManager.AccountData acc : accs.values()) {
-                                newAuto.addWord(acc.password());
-                            }
-                        }
+                        PasswordManager.populateProtectionAutomaton(newAuto::addWord, null);
                         newAuto.buildFailureLinks();
                         allServersCache = newAuto;
                     }
@@ -143,10 +150,7 @@ public class ChatProtectionMatcher {
                 synchronized (ChatProtectionMatcher.class) {
                     if (currentServerCache == null || !norm.equalsIgnoreCase(cachedServerIp)) {
                         Automaton newAuto = new Automaton();
-                        Map<String, PasswordManager.AccountData> accs = PasswordManager.getServerAccounts(norm);
-                        for (PasswordManager.AccountData acc : accs.values()) {
-                            newAuto.addWord(acc.password());
-                        }
+                        PasswordManager.populateProtectionAutomaton(newAuto::addWord, norm);
                         newAuto.buildFailureLinks();
                         currentServerCache = newAuto;
                         cachedServerIp = norm;

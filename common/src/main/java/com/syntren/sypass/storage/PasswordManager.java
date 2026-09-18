@@ -1,10 +1,8 @@
 package com.syntren.sypass.storage;
 
-import com.google.gson.Gson;
-import com.google.gson.GsonBuilder;
-import com.google.gson.JsonObject;
-import com.google.gson.JsonParser;
+import com.google.gson.*;
 import com.google.gson.reflect.TypeToken;
+import com.syntren.sypass.config.SYPassConfig;
 import com.syntren.sypass.platform.PlatformHelper;
 import com.syntren.sypass.util.ChatProtectionMatcher;
 
@@ -17,6 +15,7 @@ import javax.crypto.spec.PBEKeySpec;
 import javax.crypto.spec.SecretKeySpec;
 import java.io.File;
 import java.io.FileReader;
+import java.lang.reflect.Type;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -25,9 +24,51 @@ import java.nio.file.attribute.PosixFilePermission;
 import java.nio.file.attribute.PosixFilePermissions;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Consumer;
 
 public class PasswordManager {
-    private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
+
+    private static final Gson GSON = new GsonBuilder()
+            .registerTypeAdapter(AccountData.class, new JsonDeserializer<AccountData>() {
+                @Override
+                public AccountData deserialize(JsonElement json, Type typeOfT, JsonDeserializationContext context) throws JsonParseException {
+                    JsonObject obj = json.getAsJsonObject();
+                    char[] pass = new char[0];
+                    if (obj.has("password") && !obj.get("password").isJsonNull()) {
+                        JsonElement pElem = obj.get("password");
+                        if (pElem.isJsonPrimitive() && pElem.getAsJsonPrimitive().isString()) {
+                            pass = pElem.getAsString().toCharArray();
+                        } else if (pElem.isJsonArray()) {
+                            JsonArray arr = pElem.getAsJsonArray();
+                            pass = new char[arr.size()];
+                            for (int i = 0; i < arr.size(); i++) {
+                                pass[i] = arr.get(i).getAsCharacter();
+                            }
+                        }
+                    }
+                    String cmd = obj.has("command") ? obj.get("command").getAsString() : "/login";
+                    boolean synced = obj.has("isSynced") && obj.get("isSynced").getAsBoolean();
+                    String remoteId = obj.has("remoteId") ? obj.get("remoteId").getAsString() : "";
+                    boolean favorite = obj.has("isFavorite") && obj.get("isFavorite").getAsBoolean();
+                    long lastUsed = obj.has("lastUsed") ? obj.get("lastUsed").getAsLong() : 0L;
+                    return new AccountData(pass, cmd, synced, remoteId, favorite, lastUsed);
+                }
+            })
+            .registerTypeAdapter(AccountData.class, new JsonSerializer<AccountData>() {
+                @Override
+                public JsonElement serialize(AccountData src, Type typeOfSrc, JsonSerializationContext context) {
+                    JsonObject obj = new JsonObject();
+                    obj.addProperty("password", src.getPasswordAsString());
+                    obj.addProperty("command", src.command());
+                    obj.addProperty("isSynced", src.isSynced());
+                    obj.addProperty("remoteId", src.remoteId());
+                    obj.addProperty("isFavorite", src.isFavorite());
+                    obj.addProperty("lastUsed", src.lastUsed());
+                    return obj;
+                }
+            })
+            .setPrettyPrinting()
+            .create();
 
     public static Path getConfigDir() {
         return PlatformHelper.get().getConfigDir().resolve("sypass");
@@ -41,6 +82,10 @@ public class PasswordManager {
         return getConfigDir().resolve("sypass.key");
     }
 
+    public static Path getEncKeyFile() {
+        return getConfigDir().resolve("sypass.key.enc");
+    }
+
     public static Path getOldConfigFile() {
         return PlatformHelper.get().getConfigDir().resolve("sypass.json");
     }
@@ -52,17 +97,27 @@ public class PasswordManager {
     private static final Map<String, Map<String, AccountData>> memoryData = new ConcurrentHashMap<>();
     private static String savedBwSessionKey = "";
     private static SecretKey secretKey;
+    private static volatile boolean vaultLocked = false;
+    private static boolean legacyFormatDetected = false;
 
-    public record AccountData(String password, String command, boolean isSynced, String remoteId, boolean isFavorite, long lastUsed) {
-        public AccountData(String password, String command) {
+    private static final int GCM_IV_LENGTH = 12;
+    private static final int GCM_TAG_LENGTH_BIT = 128;
+
+    public record AccountData(char[] password, String command, boolean isSynced, String remoteId, boolean isFavorite, long lastUsed) {
+        public AccountData(char[] password, String command) {
             this(password, command, false, "", false, 0L);
         }
 
-        public AccountData(String password, String command, boolean isSynced, String remoteId) {
+        public AccountData(char[] password, String command, boolean isSynced, String remoteId) {
             this(password, command, isSynced, remoteId, false, 0L);
         }
 
+        public AccountData(String password, String command, boolean isSynced, String remoteId, boolean isFavorite, long lastUsed) {
+            this(password != null ? password.toCharArray() : new char[0], command, isSynced, remoteId, isFavorite, lastUsed);
+        }
+
         public AccountData {
+            password = (password != null) ? password.clone() : new char[0];
             if (command == null || command.isBlank()) {
                 command = "/login";
             }
@@ -73,6 +128,18 @@ public class PasswordManager {
                 remoteId = "";
             }
         }
+
+        public char[] getPasswordCopy() {
+            return password.clone();
+        }
+
+        public String getPasswordAsString() {
+            return new String(password);
+        }
+
+        public void wipe() {
+            Arrays.fill(password, '\0');
+        }
     }
 
     public static void init() {
@@ -81,14 +148,186 @@ public class PasswordManager {
             if (!Files.exists(configDir)) {
                 Files.createDirectories(configDir);
             }
-            loadOrCreateKey();
-            loadPasswords();
+
+            if (SYPassConfig.isMasterPasswordEnabled() || Files.exists(getEncKeyFile())) {
+                vaultLocked = true;
+                secretKey = null;
+                memoryData.clear();
+            } else {
+                vaultLocked = false;
+                loadOrCreateKey();
+                loadPasswords();
+            }
         } catch (Exception e) {
             e.printStackTrace();
         }
     }
 
-    private static boolean legacyFormatDetected = false;
+    public static boolean isVaultLocked() {
+        return vaultLocked;
+    }
+
+    public static synchronized boolean unlockVault(char[] masterPassword) {
+        if (!vaultLocked) return true;
+        if (masterPassword == null || masterPassword.length == 0) return false;
+        try {
+            Path encKeyFile = getEncKeyFile();
+            if (!Files.exists(encKeyFile)) return false;
+
+            String saltBase64 = SYPassConfig.getMasterPasswordSalt();
+            if (saltBase64.isBlank()) return false;
+            byte[] salt = Base64.getDecoder().decode(saltBase64);
+            int iterations = SYPassConfig.getMasterPasswordIterations();
+
+            SecretKeyFactory factory = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256");
+            PBEKeySpec spec = new PBEKeySpec(masterPassword, salt, iterations, 256);
+            SecretKey derivedKey = new SecretKeySpec(factory.generateSecret(spec).getEncoded(), "AES");
+            spec.clearPassword();
+
+            byte[] encData = Files.readAllBytes(encKeyFile);
+            String encStr = new String(encData, StandardCharsets.UTF_8).trim();
+            if (!encStr.startsWith("gcm:")) {
+                return false;
+            }
+            byte[] combined = Base64.getDecoder().decode(encStr.substring(4));
+            if (combined.length <= GCM_IV_LENGTH) return false;
+
+            byte[] iv = new byte[GCM_IV_LENGTH];
+            System.arraycopy(combined, 0, iv, 0, GCM_IV_LENGTH);
+            byte[] cipherText = new byte[combined.length - GCM_IV_LENGTH];
+            System.arraycopy(combined, GCM_IV_LENGTH, cipherText, 0, cipherText.length);
+
+            Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
+            cipher.init(Cipher.DECRYPT_MODE, derivedKey, new GCMParameterSpec(GCM_TAG_LENGTH_BIT, iv));
+            byte[] rawKeyBytes = cipher.doFinal(cipherText);
+
+            secretKey = new SecretKeySpec(rawKeyBytes, "AES");
+            Arrays.fill(rawKeyBytes, (byte) 0);
+
+            vaultLocked = false;
+            loadPasswords();
+            return true;
+        } catch (Exception e) {
+            return false;
+        } finally {
+            Arrays.fill(masterPassword, '\0');
+        }
+    }
+
+    public static synchronized boolean enableMasterPassword(char[] masterPassword) {
+        if (masterPassword == null || masterPassword.length == 0) return false;
+        try {
+            if (secretKey == null) {
+                loadOrCreateKey();
+            }
+            exportBackup();
+
+            byte[] salt = new byte[16];
+            new java.security.SecureRandom().nextBytes(salt);
+            int iterations = 100000;
+
+            SecretKeyFactory factory = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256");
+            PBEKeySpec spec = new PBEKeySpec(masterPassword, salt, iterations, 256);
+            SecretKey derivedKey = new SecretKeySpec(factory.generateSecret(spec).getEncoded(), "AES");
+            spec.clearPassword();
+
+            byte[] iv = new byte[GCM_IV_LENGTH];
+            new java.security.SecureRandom().nextBytes(iv);
+
+            Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
+            cipher.init(Cipher.ENCRYPT_MODE, derivedKey, new GCMParameterSpec(GCM_TAG_LENGTH_BIT, iv));
+            byte[] encKey = cipher.doFinal(secretKey.getEncoded());
+
+            byte[] combined = new byte[iv.length + encKey.length];
+            System.arraycopy(iv, 0, combined, 0, iv.length);
+            System.arraycopy(encKey, 0, combined, iv.length, encKey.length);
+
+            Path encKeyFile = getEncKeyFile();
+            writeSecureFile(encKeyFile, ("gcm:" + Base64.getEncoder().encodeToString(combined)).getBytes(StandardCharsets.UTF_8));
+
+            Path plainKey = getKeyFile();
+            if (Files.exists(plainKey)) {
+                Files.delete(plainKey);
+            }
+
+            SYPassConfig.setMasterPasswordEnabled(true);
+            SYPassConfig.setMasterPasswordSalt(Base64.getEncoder().encodeToString(salt));
+            SYPassConfig.setMasterPasswordIterations(iterations);
+            vaultLocked = false;
+            return true;
+        } catch (Exception e) {
+            e.printStackTrace();
+            return false;
+        } finally {
+            Arrays.fill(masterPassword, '\0');
+        }
+    }
+
+    public static synchronized boolean disableMasterPassword(char[] masterPassword) {
+        if (masterPassword == null || masterPassword.length == 0) return false;
+        try {
+            Path encKeyFile = getEncKeyFile();
+            if (!Files.exists(encKeyFile)) return false;
+
+            String saltBase64 = SYPassConfig.getMasterPasswordSalt();
+            byte[] salt = Base64.getDecoder().decode(saltBase64);
+            int iterations = SYPassConfig.getMasterPasswordIterations();
+
+            SecretKeyFactory factory = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256");
+            PBEKeySpec spec = new PBEKeySpec(masterPassword, salt, iterations, 256);
+            SecretKey derivedKey = new SecretKeySpec(factory.generateSecret(spec).getEncoded(), "AES");
+            spec.clearPassword();
+
+            byte[] encData = Files.readAllBytes(encKeyFile);
+            String encStr = new String(encData, StandardCharsets.UTF_8).trim();
+            byte[] combined = Base64.getDecoder().decode(encStr.substring(4));
+            byte[] iv = new byte[GCM_IV_LENGTH];
+            System.arraycopy(combined, 0, iv, 0, GCM_IV_LENGTH);
+            byte[] cipherText = new byte[combined.length - GCM_IV_LENGTH];
+            System.arraycopy(combined, GCM_IV_LENGTH, cipherText, 0, cipherText.length);
+
+            Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
+            cipher.init(Cipher.DECRYPT_MODE, derivedKey, new GCMParameterSpec(GCM_TAG_LENGTH_BIT, iv));
+            byte[] rawKeyBytes = cipher.doFinal(cipherText);
+
+            secretKey = new SecretKeySpec(rawKeyBytes, "AES");
+            writeSecureFile(getKeyFile(), rawKeyBytes);
+            Arrays.fill(rawKeyBytes, (byte) 0);
+
+            Files.deleteIfExists(encKeyFile);
+
+            SYPassConfig.setMasterPasswordEnabled(false);
+            SYPassConfig.setMasterPasswordSalt("");
+            vaultLocked = false;
+            return true;
+        } catch (Exception e) {
+            return false;
+        } finally {
+            Arrays.fill(masterPassword, '\0');
+        }
+    }
+
+    public static synchronized boolean resetVaultWithBitwarden() {
+        try {
+            Files.deleteIfExists(getEncKeyFile());
+            Files.deleteIfExists(getKeyFile());
+            Files.deleteIfExists(getConfigFile());
+            SYPassConfig.setMasterPasswordEnabled(false);
+            SYPassConfig.setMasterPasswordSalt("");
+
+            secretKey = null;
+            memoryData.clear();
+            loadOrCreateKey();
+            vaultLocked = false;
+
+            if (BitwardenManager.isCliInstalled() && BitwardenManager.hasActiveSession()) {
+                BitwardenManager.pullFromBitwarden();
+            }
+            return true;
+        } catch (Exception e) {
+            return false;
+        }
+    }
 
     public static void enforceSecurePermissions(Path path) {
         if (path == null || !Files.exists(path)) return;
@@ -137,7 +376,7 @@ public class PasswordManager {
                 }
                 return;
             } else {
-                System.err.println("[SYPass] Corrupted or invalid key size (" + keyBytes.length + " bytes). Backing up corrupted key.");
+                System.err.println("[SYPass] Corrupted key size (" + keyBytes.length + " bytes). Backing up corrupted key.");
                 Files.move(targetKeyFile, targetKeyFile.resolveSibling(targetKeyFile.getFileName() + ".corrupted"), StandardCopyOption.REPLACE_EXISTING);
             }
         }
@@ -161,6 +400,15 @@ public class PasswordManager {
     }
 
     public static synchronized void savePassword(String serverIp, String username, String password, String command) {
+        char[] passChars = password != null ? password.toCharArray() : new char[0];
+        try {
+            savePassword(serverIp, username, passChars, command);
+        } finally {
+            Arrays.fill(passChars, '\0');
+        }
+    }
+
+    public static synchronized void savePassword(String serverIp, String username, char[] password, String command) {
         AccountData existing = getPassword(serverIp, username);
         boolean synced = (existing != null && existing.isSynced());
         String remoteId = (existing != null && existing.remoteId() != null) ? existing.remoteId() : "";
@@ -170,6 +418,15 @@ public class PasswordManager {
     }
 
     public static synchronized void savePassword(String serverIp, String username, String password, String command, boolean isSynced, String remoteId) {
+        char[] passChars = password != null ? password.toCharArray() : new char[0];
+        try {
+            savePassword(serverIp, username, passChars, command, isSynced, remoteId);
+        } finally {
+            Arrays.fill(passChars, '\0');
+        }
+    }
+
+    public static synchronized void savePassword(String serverIp, String username, char[] password, String command, boolean isSynced, String remoteId) {
         AccountData existing = getPassword(serverIp, username);
         boolean favorite = (existing != null && existing.isFavorite());
         long lastUsed = (existing != null) ? existing.lastUsed() : 0L;
@@ -177,20 +434,31 @@ public class PasswordManager {
     }
 
     public static synchronized void savePassword(String serverIp, String username, String password, String command, boolean isSynced, String remoteId, boolean isFavorite, long lastUsed) {
+        char[] passChars = password != null ? password.toCharArray() : new char[0];
+        try {
+            savePassword(serverIp, username, passChars, command, isSynced, remoteId, isFavorite, lastUsed);
+        } finally {
+            Arrays.fill(passChars, '\0');
+        }
+    }
+
+    public static synchronized void savePassword(String serverIp, String username, char[] password, String command, boolean isSynced, String remoteId, boolean isFavorite, long lastUsed) {
         if (serverIp == null || serverIp.isBlank() || username == null || username.isBlank() || password == null) {
             return;
         }
         String cleanServer = normalizeServerAddress(serverIp);
         username = username.trim();
-        password = password.trim();
 
         String formattedCommand = (command != null && !command.isBlank()) ? command.trim() : "/login";
         if (!formattedCommand.startsWith("/")) {
             formattedCommand = "/" + formattedCommand;
         }
 
-        memoryData.computeIfAbsent(cleanServer, k -> new ConcurrentHashMap<>())
-                .put(username, new AccountData(password, formattedCommand, isSynced, remoteId, isFavorite, lastUsed));
+        Map<String, AccountData> serverMap = memoryData.computeIfAbsent(cleanServer, k -> new ConcurrentHashMap<>());
+        AccountData old = serverMap.put(username, new AccountData(password, formattedCommand, isSynced, remoteId, isFavorite, lastUsed));
+        if (old != null) {
+            old.wipe();
+        }
         saveToFile();
     }
 
@@ -212,6 +480,17 @@ public class PasswordManager {
         AccountData existing = getPassword(serverIp, username);
         if (existing != null) {
             savePassword(serverIp, username, existing.password(), existing.command(), existing.isSynced(), existing.remoteId(), existing.isFavorite(), System.currentTimeMillis());
+        }
+    }
+
+    public static void copyPasswordToClipboard(String serverIp, String username) {
+        AccountData acc = getPassword(serverIp, username);
+        if (acc == null) return;
+        char[] copy = acc.getPasswordCopy();
+        try {
+            PlatformHelper.get().copyToClipboard(new String(copy));
+        } finally {
+            Arrays.fill(copy, '\0');
         }
     }
 
@@ -260,8 +539,54 @@ public class PasswordManager {
         return memoryData.getOrDefault(normServer + ":25565", Collections.emptyMap());
     }
 
+    /**
+     * Sanitized public view of all stored accounts.
+     * Passwords are stripped to empty char arrays to protect against reflection and inspection.
+     */
     public static Map<String, Map<String, AccountData>> getAllData() {
+        Map<String, Map<String, AccountData>> sanitized = new HashMap<>();
+        for (Map.Entry<String, Map<String, AccountData>> sEntry : memoryData.entrySet()) {
+            Map<String, AccountData> sMap = new HashMap<>();
+            for (Map.Entry<String, AccountData> aEntry : sEntry.getValue().entrySet()) {
+                AccountData d = aEntry.getValue();
+                sMap.put(aEntry.getKey(), new AccountData(new char[0], d.command(), d.isSynced(), d.remoteId(), d.isFavorite(), d.lastUsed()));
+            }
+            sanitized.put(sEntry.getKey(), Collections.unmodifiableMap(sMap));
+        }
+        return Collections.unmodifiableMap(sanitized);
+    }
+
+    /**
+     * Internal raw access restricted to the package.
+     */
+    static Map<String, Map<String, AccountData>> getRawMemoryData() {
         return memoryData;
+    }
+
+    public static void populateProtectionAutomaton(Consumer<char[]> consumer, String serverFilter) {
+        if (serverFilter == null) {
+            for (Map<String, AccountData> accs : memoryData.values()) {
+                for (AccountData acc : accs.values()) {
+                    char[] pass = acc.password();
+                    if (pass != null && pass.length > 0) {
+                        consumer.accept(pass);
+                    }
+                }
+            }
+        } else {
+            String norm = normalizeServerAddress(serverFilter);
+            Map<String, AccountData> accs = memoryData.get(norm);
+            if (accs == null) accs = memoryData.get(serverFilter.trim());
+            if (accs == null) accs = memoryData.get(norm + ":25565");
+            if (accs != null) {
+                for (AccountData acc : accs.values()) {
+                    char[] pass = acc.password();
+                    if (pass != null && pass.length > 0) {
+                        consumer.accept(pass);
+                    }
+                }
+            }
+        }
     }
 
     public static int getTotalCount() {
@@ -292,7 +617,10 @@ public class PasswordManager {
     private static boolean removePasswordFromMap(String serverKey, String user) {
         Map<String, AccountData> serverAccounts = memoryData.get(serverKey);
         if (serverAccounts != null) {
-            serverAccounts.remove(user);
+            AccountData old = serverAccounts.remove(user);
+            if (old != null) {
+                old.wipe();
+            }
             if (serverAccounts.isEmpty()) {
                 memoryData.remove(serverKey);
             }
@@ -339,6 +667,7 @@ public class PasswordManager {
     }
 
     private static synchronized void saveToFile() {
+        if (vaultLocked) return;
         try {
             Path configDir = getConfigDir();
             if (!Files.exists(configDir)) {
@@ -378,6 +707,11 @@ public class PasswordManager {
                             new TypeToken<Map<String, Map<String, AccountData>>>(){}.getType()
                     );
                     if (loadedData != null) {
+                        for (Map<String, AccountData> m : memoryData.values()) {
+                            for (AccountData d : m.values()) {
+                                d.wipe();
+                            }
+                        }
                         memoryData.clear();
                         for (Map.Entry<String, Map<String, AccountData>> entry : loadedData.entrySet()) {
                             String normKey = normalizeServerAddress(entry.getKey());
@@ -408,9 +742,6 @@ public class PasswordManager {
             e.printStackTrace();
         }
     }
-
-    private static final int GCM_IV_LENGTH = 12;
-    private static final int GCM_TAG_LENGTH_BIT = 128;
 
     private static String encrypt(String data) throws Exception {
         if (secretKey == null) {
@@ -483,7 +814,7 @@ public class PasswordManager {
                 JsonObject accs = new JsonObject();
                 for (Map.Entry<String, AccountData> aEntry : sEntry.getValue().entrySet()) {
                     JsonObject acc = new JsonObject();
-                    acc.addProperty("password", aEntry.getValue().password());
+                    acc.addProperty("password", aEntry.getValue().getPasswordAsString());
                     acc.addProperty("command", aEntry.getValue().command());
                     acc.addProperty("isSynced", aEntry.getValue().isSynced());
                     acc.addProperty("remoteId", aEntry.getValue().remoteId());
@@ -513,6 +844,7 @@ public class PasswordManager {
                 SecretKeyFactory factory = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256");
                 PBEKeySpec pbeSpec = new PBEKeySpec(backupPassword.trim().toCharArray(), salt, 100000, 256);
                 SecretKey derivedKey = new SecretKeySpec(factory.generateSecret(pbeSpec).getEncoded(), "AES");
+                pbeSpec.clearPassword();
 
                 Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
                 cipher.init(Cipher.ENCRYPT_MODE, derivedKey, new GCMParameterSpec(GCM_TAG_LENGTH_BIT, iv));
@@ -566,7 +898,7 @@ public class PasswordManager {
     public static synchronized int importBackupFile(File file, String backupPassword) {
         if (file == null || !file.exists()) return -1;
         if (file.getName().toLowerCase(java.util.Locale.ROOT).endsWith(".csv")) {
-            return importBitwardenCsv(file);
+            return importCsv(file);
         }
         try (FileReader reader = new FileReader(file)) {
             JsonObject wrapper = GSON.fromJson(reader, JsonObject.class);
@@ -591,6 +923,7 @@ public class PasswordManager {
                     SecretKeyFactory factory = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256");
                     PBEKeySpec pbeSpec = new PBEKeySpec(backupPassword.trim().toCharArray(), salt, iterations, 256);
                     SecretKey derivedKey = new SecretKeySpec(factory.generateSecret(pbeSpec).getEncoded(), "AES");
+                    pbeSpec.clearPassword();
 
                     Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
                     cipher.init(Cipher.DECRYPT_MODE, derivedKey, new GCMParameterSpec(GCM_TAG_LENGTH_BIT, iv));
@@ -672,7 +1005,7 @@ public class PasswordManager {
                     csv.append("0,");
                     csv.append(escapeCsvField(serverIp)).append(",");
                     csv.append(escapeCsvField(username)).append(",");
-                    csv.append(escapeCsvField(acc.password())).append(",");
+                    csv.append(escapeCsvField(acc.getPasswordAsString())).append(",");
                     csv.append("\n");
                 }
             }
@@ -704,7 +1037,7 @@ public class PasswordManager {
                 return -1;
             }
             java.util.Arrays.sort(files, (a, b) -> Long.compare(b.lastModified(), a.lastModified()));
-            return importBitwardenCsv(files[0]);
+            return importCsv(files[0]);
         } catch (Exception e) {
             e.printStackTrace();
             return -2;
@@ -712,6 +1045,17 @@ public class PasswordManager {
     }
 
     public static synchronized int importBitwardenCsv(File file) {
+        return importCsv(file);
+    }
+
+    /**
+     * Enhanced CSV importer that auto-detects column mappings for:
+     * - Bitwarden CSV
+     * - KeePass 1.x & 2.x CSV
+     * - 1Password CSV
+     * - Generic / Browser CSV
+     */
+    public static synchronized int importCsv(File file) {
         if (file == null || !file.exists()) return -1;
         try {
             List<String> lines = Files.readAllLines(file.toPath(), StandardCharsets.UTF_8);
@@ -723,12 +1067,12 @@ public class PasswordManager {
                 colIndex.put(header.get(i).trim().toLowerCase(java.util.Locale.ROOT), i);
             }
 
-            int nameIdx = colIndex.getOrDefault("name", colIndex.getOrDefault("title", -1));
-            int userIdx = colIndex.getOrDefault("login_username", colIndex.getOrDefault("username", -1));
-            int passIdx = colIndex.getOrDefault("login_password", colIndex.getOrDefault("password", -1));
-            int notesIdx = colIndex.getOrDefault("notes", colIndex.getOrDefault("comment", -1));
-            int favIdx = colIndex.getOrDefault("favorite", -1);
-            int uriIdx = colIndex.getOrDefault("login_uri", colIndex.getOrDefault("url", -1));
+            int nameIdx = getColumnIndex(colIndex, "name", "title", "server", "serverip", "host", "hostname", "address", "website", "web site", "url", "login_uri", "group", "account");
+            int uriIdx = getColumnIndex(colIndex, "login_uri", "url", "website", "web site", "hostname", "server", "address");
+            int userIdx = getColumnIndex(colIndex, "login_username", "username", "login name", "user", "login", "email", "account");
+            int passIdx = getColumnIndex(colIndex, "login_password", "password", "pass", "code", "secret");
+            int notesIdx = getColumnIndex(colIndex, "notes", "comment", "comments", "command", "cmd", "description");
+            int favIdx = getColumnIndex(colIndex, "favorite", "fav", "starred");
 
             if (passIdx == -1) {
                 return -2;
@@ -740,13 +1084,20 @@ public class PasswordManager {
                 if (line.isEmpty()) continue;
                 List<String> cols = parseCsvLine(line);
 
-                String server = nameIdx >= 0 && nameIdx < cols.size() ? cols.get(nameIdx).trim() : "";
+                String server = (nameIdx >= 0 && nameIdx < cols.size()) ? cols.get(nameIdx).trim() : "";
                 if (server.isEmpty() && uriIdx >= 0 && uriIdx < cols.size()) {
                     server = cols.get(uriIdx).trim();
                 }
-                String username = userIdx >= 0 && userIdx < cols.size() ? cols.get(userIdx).trim() : "";
-                String password = passIdx >= 0 && passIdx < cols.size() ? cols.get(passIdx).trim() : "";
-                String notes = notesIdx >= 0 && notesIdx < cols.size() ? cols.get(notesIdx).trim() : "";
+
+                // Strip URL prefixes if exported from browser or KeePass URL field
+                if (server.startsWith("mc://")) server = server.substring(5);
+                if (server.startsWith("https://")) server = server.substring(8);
+                if (server.startsWith("http://")) server = server.substring(7);
+                if (server.contains("/")) server = server.substring(0, server.indexOf('/'));
+
+                String username = (userIdx >= 0 && userIdx < cols.size()) ? cols.get(userIdx).trim() : "";
+                String password = (passIdx >= 0 && passIdx < cols.size()) ? cols.get(passIdx).trim() : "";
+                String notes = (notesIdx >= 0 && notesIdx < cols.size()) ? cols.get(notesIdx).trim() : "";
                 boolean favorite = false;
                 if (favIdx >= 0 && favIdx < cols.size()) {
                     String favVal = cols.get(favIdx).trim();
@@ -763,7 +1114,12 @@ public class PasswordManager {
                     cmd = firstSpace > 0 ? notes.substring(0, firstSpace) : notes;
                 }
 
-                savePassword(server, username, password, cmd, false, "", favorite, 0L);
+                char[] passChars = password.toCharArray();
+                try {
+                    savePassword(server, username, passChars, cmd, false, "", favorite, 0L);
+                } finally {
+                    Arrays.fill(passChars, '\0');
+                }
                 count++;
             }
 
@@ -773,6 +1129,16 @@ public class PasswordManager {
             e.printStackTrace();
             return -2;
         }
+    }
+
+    private static int getColumnIndex(Map<String, Integer> colIndex, String... candidates) {
+        for (String c : candidates) {
+            Integer idx = colIndex.get(c.toLowerCase(java.util.Locale.ROOT));
+            if (idx != null) {
+                return idx;
+            }
+        }
+        return -1;
     }
 
     public static List<String> parseCsvLine(String line) {

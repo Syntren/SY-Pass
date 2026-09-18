@@ -607,7 +607,7 @@ public class BitwardenManager {
                 }
             }
 
-            Map<String, Map<String, PasswordManager.AccountData>> allData = PasswordManager.getAllData();
+            Map<String, Map<String, PasswordManager.AccountData>> allData = PasswordManager.getRawMemoryData();
             for (Map.Entry<String, Map<String, PasswordManager.AccountData>> sEntry : allData.entrySet()) {
                 String sIp = sEntry.getKey();
                 for (Map.Entry<String, PasswordManager.AccountData> aEntry : sEntry.getValue().entrySet()) {
@@ -682,7 +682,7 @@ public class BitwardenManager {
                 } catch (Exception ignored) {}
             }
 
-            Map<String, Map<String, PasswordManager.AccountData>> allData = PasswordManager.getAllData();
+            Map<String, Map<String, PasswordManager.AccountData>> allData = PasswordManager.getRawMemoryData();
             int created = 0;
             int updated = 0;
 
@@ -697,7 +697,7 @@ public class BitwardenManager {
                             ? data.remoteId()
                             : existingItemIds.get(key);
 
-                    String assignedId = createOrUpdateBitwardenItem(existingId, serverIp, username, data.password(), data.command());
+                    String assignedId = createOrUpdateBitwardenItem(existingId, serverIp, username, data.getPasswordAsString(), data.command());
                     if (assignedId != null) {
                         existingItemIds.put(key, assignedId);
                         if (existingId != null && !existingId.isBlank()) updated++;

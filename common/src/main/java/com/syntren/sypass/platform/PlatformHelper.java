@@ -25,6 +25,11 @@ public interface PlatformHelper {
      */
     void copyToClipboard(String text);
 
+    default void copyToClipboard(char[] chars) {
+        if (chars == null) return;
+        copyToClipboard(new String(chars));
+    }
+
     /**
      * Singleton інстанс через стандартний ServiceLoader.
      */

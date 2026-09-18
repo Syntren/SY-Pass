@@ -11,6 +11,10 @@ architectury {
 allprojects {
     group = rootProject.maven_group
     version = rootProject.mod_version
+
+    repositories {
+        mavenCentral()
+    }
 }
 
 subprojects {
@@ -30,6 +34,10 @@ subprojects {
     tasks.withType(JavaCompile).configureEach {
         it.options.release = 21
         it.options.encoding = 'UTF-8'
+    }
+
+    tasks.withType(Test).configureEach {
+        useJUnitPlatform()
     }
 
     tasks.withType(Copy).configureEach {

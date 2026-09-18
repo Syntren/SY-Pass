@@ -1182,7 +1182,8 @@ public class SYPassScreen extends Screen {
                 }).bounds(cardX, y + 105, cardWidth, 20).build());
             }
             case LOGIN_PATTERNS -> {
-                this.regTemplateBox = new EditBox(this.font, cardX, y + 25, cardWidth - 65, 20, Component.translatable("sypass.gui.settings.reg_template.title"));
+                // Section 1: Template & Presets
+                this.regTemplateBox = new EditBox(this.font, cardX, y + 16, cardWidth - 65, 20, Component.translatable("sypass.gui.settings.reg_template.title"));
                 this.regTemplateBox.setMaxLength(128);
                 this.regTemplateBox.setValue(SYPassConfig.getRegisterCommandTemplate());
                 addRenderableWidget(this.regTemplateBox);
@@ -1192,9 +1193,24 @@ public class SYPassScreen extends Screen {
                         SYPassConfig.setRegisterCommandTemplate(this.regTemplateBox.getValue().trim());
                         setStatusMessage("§a" + Component.translatable("sypass.gui.settings.reg_template.saved").getString());
                     }
-                }).bounds(cardX + cardWidth - 60, y + 25, 60, 20).build());
+                }).bounds(cardX + cardWidth - 60, y + 16, 60, 20).build());
 
-                this.newPatternBox = new EditBox(this.font, cardX, y + 65, cardWidth - 65, 20, Component.translatable("sypass.gui.settings.custom_patterns.title"));
+                int pw = (cardWidth - 6) / 4;
+                String[] presets = new String[]{"/register %p% %p%", "/reg %p% %p%", "/register %p%", "/reg %p%"};
+                for (int i = 0; i < presets.length; i++) {
+                    String preset = presets[i];
+                    addRenderableWidget(Button.builder(Component.literal(preset), b -> {
+                        if (this.regTemplateBox != null) {
+                            this.regTemplateBox.setValue(preset);
+                            SYPassConfig.setRegisterCommandTemplate(preset);
+                            setStatusMessage("§a" + Component.translatable("sypass.gui.settings.reg_template.saved").getString());
+                        }
+                    }).bounds(cardX + i * (pw + 2), y + 39, pw, 18).build());
+                }
+
+                // Section 2: Custom Smart Login Patterns
+                int pY = y + 74;
+                this.newPatternBox = new EditBox(this.font, cardX, pY, cardWidth - 45, 20, Component.translatable("sypass.gui.settings.custom_patterns.title"));
                 this.newPatternBox.setMaxLength(128);
                 this.newPatternBox.setHint(Component.translatable("sypass.gui.settings.custom_patterns.placeholder"));
                 addRenderableWidget(this.newPatternBox);
@@ -1204,14 +1220,31 @@ public class SYPassScreen extends Screen {
                         SYPassConfig.addCustomLoginPattern(this.newPatternBox.getValue().trim());
                         this.newPatternBox.setValue("");
                         setStatusMessage("§a" + Component.translatable("sypass.gui.settings.custom_patterns.added").getString());
+                        clearWidgets();
+                        init();
                     }
-                }).bounds(cardX + cardWidth - 60, y + 65, 60, 20).build());
+                }).bounds(cardX + cardWidth - 40, pY, 40, 20).build());
+
+                List<String> patterns = SYPassConfig.getCustomLoginPatterns();
+                int listY = pY + 24;
+                int maxShow = Math.min(3, patterns.size());
+                for (int i = 0; i < maxShow; i++) {
+                    String pat = patterns.get(i);
+                    int itemY = listY + i * 18;
+                    addRenderableWidget(Button.builder(Component.literal("✕"), b -> {
+                        SYPassConfig.removeCustomLoginPattern(pat);
+                        clearWidgets();
+                        init();
+                    }).bounds(cardX + cardWidth - 22, itemY, 22, 16)
+                      .tooltip(Tooltip.create(Component.translatable("sypass.gui.button.delete.tooltip")))
+                      .build());
+                }
 
                 addRenderableWidget(Button.builder(Component.translatable("sypass.gui.bw.otp.back"), b -> {
                     this.settingsStage = SettingsStage.MAIN;
                     clearWidgets();
                     init();
-                }).bounds(cardX, y + 105, cardWidth, 20).build());
+                }).bounds(cardX, y + 160, cardWidth, 20).build());
             }
         }
 
@@ -1273,8 +1306,21 @@ public class SYPassScreen extends Screen {
                 String titleKey = mpEn ? "sypass.gui.settings.master_pass.remove" : "sypass.gui.settings.master_pass.setup";
                 guiGraphics.drawCenteredString(this.font, Component.translatable(titleKey).withStyle(ChatFormatting.GOLD, ChatFormatting.BOLD), this.width / 2, startY + 4, 0xFFFFFF);
             } else if (settingsStage == SettingsStage.LOGIN_PATTERNS) {
-                guiGraphics.drawString(this.font, Component.translatable("sypass.gui.settings.reg_template.title"), cardX, startY + 12, 0xCCCCCC, true);
-                guiGraphics.drawString(this.font, Component.translatable("sypass.gui.settings.custom_patterns.title"), cardX, startY + 52, 0xCCCCCC, true);
+                guiGraphics.drawString(this.font, Component.translatable("sypass.gui.settings.reg_template.title"), cardX, startY + 4, 0xCCCCCC, true);
+                int pY = startY + 62;
+                guiGraphics.drawString(this.font, Component.translatable("sypass.gui.settings.custom_patterns.title"), cardX, pY, 0xCCCCCC, true);
+
+                List<String> patterns = SYPassConfig.getCustomLoginPatterns();
+                int listY = pY + 39;
+                if (patterns.isEmpty()) {
+                    guiGraphics.drawString(this.font, Component.literal("§7(Default: /login, /l, enter, password, увійдіть, войдите...)"), cardX, listY + 3, 0x888888, true);
+                } else {
+                    int maxShow = Math.min(3, patterns.size());
+                    for (int i = 0; i < maxShow; i++) {
+                        String pat = patterns.get(i);
+                        guiGraphics.drawString(this.font, Component.literal("§b• " + pat), cardX, listY + i * 18 + 4, 0x55FFFF, true);
+                    }
+                }
             }
         }
 

@@ -42,7 +42,8 @@ public class PasswordManager {
                             JsonArray arr = pElem.getAsJsonArray();
                             pass = new char[arr.size()];
                             for (int i = 0; i < arr.size(); i++) {
-                                pass[i] = arr.get(i).getAsCharacter();
+                                String s = arr.get(i).getAsString();
+                                pass[i] = s.isEmpty() ? ' ' : s.charAt(0);
                             }
                         }
                     }

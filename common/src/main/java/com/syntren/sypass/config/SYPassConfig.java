@@ -2,6 +2,7 @@ package com.syntren.sypass.config;
 
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
+import com.syntren.sypass.handler.AutoLoginHandler;
 import com.syntren.sypass.platform.PlatformHelper;
 
 import java.io.File;
@@ -269,6 +270,7 @@ public class SYPassConfig {
     public static void setCustomLoginPatterns(List<String> patterns) {
         data.customLoginPatterns = patterns != null ? new ArrayList<>(patterns) : new ArrayList<>();
         save();
+        AutoLoginHandler.invalidateCustomPatterns();
     }
 
     public static void addCustomLoginPattern(String pattern) {
@@ -279,6 +281,7 @@ public class SYPassConfig {
             if (!data.customLoginPatterns.contains(pattern.trim())) {
                 data.customLoginPatterns.add(pattern.trim());
                 save();
+                AutoLoginHandler.invalidateCustomPatterns();
             }
         }
     }
@@ -287,6 +290,7 @@ public class SYPassConfig {
         if (data.customLoginPatterns != null && pattern != null) {
             data.customLoginPatterns.remove(pattern.trim());
             save();
+            AutoLoginHandler.invalidateCustomPatterns();
         }
     }
 }

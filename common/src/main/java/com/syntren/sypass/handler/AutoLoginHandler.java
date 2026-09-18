@@ -12,7 +12,9 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
 import java.util.regex.Pattern;
 
 public class AutoLoginHandler {
@@ -44,6 +46,28 @@ public class AutoLoginHandler {
     private static final Pattern REGISTER_PROMPT_PATTERN = Pattern.compile(
             "(?i)(?:/(?:register|reg)\\b)"
     );
+
+    private static volatile List<Pattern> cachedCustomPatterns = null;
+
+    public static void invalidateCustomPatterns() {
+        cachedCustomPatterns = null;
+    }
+
+    public static List<Pattern> getCompiledCustomPatterns() {
+        List<Pattern> patterns = cachedCustomPatterns;
+        if (patterns == null) {
+            patterns = new ArrayList<>();
+            for (String pat : SYPassConfig.getCustomLoginPatterns()) {
+                if (pat != null && !pat.isBlank()) {
+                    try {
+                        patterns.add(Pattern.compile(pat.trim(), Pattern.CASE_INSENSITIVE));
+                    } catch (Exception ignored) {}
+                }
+            }
+            cachedCustomPatterns = patterns;
+        }
+        return patterns;
+    }
 
     public static void onJoinServer(String serverAddress, String username) {
         if (serverAddress == null || username == null) return;
@@ -147,14 +171,10 @@ public class AutoLoginHandler {
         if (mightBeLogin && hasSavedAccount && SYPassConfig.isAutoLoginEnabled() && SYPassConfig.isSmartAutoLoginEnabled() && !hasLoggedInThisSession) {
             boolean matched = LOGIN_PROMPT_PATTERN.matcher(cleanText).find();
             if (!matched) {
-                for (String pat : SYPassConfig.getCustomLoginPatterns()) {
-                    if (pat != null && !pat.isBlank()) {
-                        try {
-                            if (Pattern.compile(pat, Pattern.CASE_INSENSITIVE).matcher(cleanText).find()) {
-                                matched = true;
-                                break;
-                            }
-                        } catch (Exception ignored) {}
+                for (Pattern pat : getCompiledCustomPatterns()) {
+                    if (pat.matcher(cleanText).find()) {
+                        matched = true;
+                        break;
                     }
                 }
             }
@@ -356,9 +376,15 @@ public class AutoLoginHandler {
             PlatformHelper.get().copyToClipboard(passChars);
 
             String template = SYPassConfig.getRegisterCommandTemplate();
-            String registerCmd = template
-                    .replace("%password%", generatedPassword)
-                    .replace("%pass%", generatedPassword);
+            String registerCmd;
+            if (template.contains("%password%") || template.contains("%pass%") || template.contains("%p%")) {
+                registerCmd = template
+                        .replace("%password%", generatedPassword)
+                        .replace("%pass%", generatedPassword)
+                        .replace("%p%", generatedPassword);
+            } else {
+                registerCmd = template + " " + generatedPassword + " " + generatedPassword;
+            }
             if (registerCmd.startsWith("/")) {
                 registerCmd = registerCmd.substring(1);
             }

@@ -24,11 +24,6 @@ public class ChatProtectionMatcher {
         int minLength = Integer.MAX_VALUE;
         boolean hasPatterns = false;
 
-        void addWord(String word) {
-            if (word == null || word.isBlank()) return;
-            addWord(word.toCharArray());
-        }
-
         void addWord(char[] word) {
             if (word == null || word.length == 0) return;
             int start = 0;

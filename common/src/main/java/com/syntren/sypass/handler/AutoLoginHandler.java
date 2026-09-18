@@ -12,6 +12,7 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 
+import java.util.Arrays;
 import java.util.regex.Pattern;
 
 public class AutoLoginHandler {
@@ -63,7 +64,7 @@ public class AutoLoginHandler {
         lastLoginAttemptMs = 0;
         lastRegisterAttemptMs = 0;
 
-        if (!SYPassConfig.isAutoLoginEnabled()) {
+        if (PasswordManager.isVaultLocked() || !SYPassConfig.isAutoLoginEnabled()) {
             return;
         }
 
@@ -139,8 +140,26 @@ public class AutoLoginHandler {
 
         boolean hasSavedAccount = PasswordManager.hasPassword(currentServerIp, username);
 
+        if (PasswordManager.isVaultLocked()) {
+            return;
+        }
+
         if (mightBeLogin && hasSavedAccount && SYPassConfig.isAutoLoginEnabled() && SYPassConfig.isSmartAutoLoginEnabled() && !hasLoggedInThisSession) {
-            if (LOGIN_PROMPT_PATTERN.matcher(cleanText).find()) {
+            boolean matched = LOGIN_PROMPT_PATTERN.matcher(cleanText).find();
+            if (!matched) {
+                for (String pat : SYPassConfig.getCustomLoginPatterns()) {
+                    if (pat != null && !pat.isBlank()) {
+                        try {
+                            if (Pattern.compile(pat, Pattern.CASE_INSENSITIVE).matcher(cleanText).find()) {
+                                matched = true;
+                                break;
+                            }
+                        } catch (Exception ignored) {}
+                    }
+                }
+            }
+
+            if (matched) {
                 if (now - lastLoginAttemptMs > 4000 && loginAttemptsThisSession < 3) {
                     lastLoginAttemptMs = now;
                     loginAttemptsThisSession++;
@@ -191,11 +210,15 @@ public class AutoLoginHandler {
             cmd = "login";
         }
 
-        String pass = entry.password().trim().replaceAll("[\\r\\n]", "");
-        if (pass.isEmpty()) return;
+        char[] passChars = entry.getPasswordCopy();
+        if (passChars.length == 0) return;
 
-        String fullCommand = cmd + " " + pass;
-        client.player.connection.sendCommand(fullCommand);
+        try {
+            String fullCommand = cmd + " " + new String(passChars);
+            client.player.connection.sendCommand(fullCommand);
+        } finally {
+            Arrays.fill(passChars, '\0');
+        }
 
         String username = client.getUser().getName();
         String titleKey = isSmart ? "sypass.toast.smartlogin.title" : "sypass.toast.autologin.title";
@@ -229,6 +252,15 @@ public class AutoLoginHandler {
             return;
         }
 
+        if (PasswordManager.isVaultLocked()) {
+            SYPassToast.show(
+                    Component.translatable("sypass.toast.vault_locked.title"),
+                    Component.translatable("sypass.toast.vault_locked.desc", "["),
+                    new ItemStack(Items.IRON_DOOR)
+            );
+            return;
+        }
+
         String username = client.getUser().getName();
         PasswordManager.AccountData entry = PasswordManager.getPassword(server.ip, username);
         if (entry != null) {
@@ -240,11 +272,15 @@ public class AutoLoginHandler {
                 cmd = "login";
             }
 
-            String pass = entry.password().trim().replaceAll("[\\r\\n]", "");
-            if (pass.isEmpty()) return;
+            char[] passChars = entry.getPasswordCopy();
+            if (passChars.length == 0) return;
 
-            String fullCommand = cmd + " " + pass;
-            client.player.connection.sendCommand(fullCommand);
+            try {
+                String fullCommand = cmd + " " + new String(passChars);
+                client.player.connection.sendCommand(fullCommand);
+            } finally {
+                Arrays.fill(passChars, '\0');
+            }
 
             SYPassToast.show(
                     Component.translatable("sypass.toast.quicklogin.title"),
@@ -284,6 +320,15 @@ public class AutoLoginHandler {
             return false;
         }
 
+        if (PasswordManager.isVaultLocked()) {
+            SYPassToast.show(
+                    Component.translatable("sypass.toast.vault_locked.title"),
+                    Component.translatable("sypass.toast.vault_locked.desc", "["),
+                    new ItemStack(Items.IRON_DOOR)
+            );
+            return false;
+        }
+
         String username = client.getUser().getName();
         String serverIp = server.ip;
 
@@ -299,16 +344,28 @@ public class AutoLoginHandler {
 
         int passLen = Math.max(6, Math.min(64, length));
         String generatedPassword = PasswordGenerator.generate(passLen);
+        char[] passChars = generatedPassword.toCharArray();
 
-        PasswordManager.savePassword(serverIp, username, generatedPassword, "/login");
+        try {
+            PasswordManager.savePassword(serverIp, username, passChars, "/login");
 
-        if (SYPassConfig.isBitwardenEnabled() && SYPassConfig.isAutoSyncEnabled() && BitwardenManager.hasActiveSession()) {
-            BitwardenManager.pushSingleItemAsync(serverIp, username, generatedPassword, "/login");
+            if (SYPassConfig.isBitwardenEnabled() && SYPassConfig.isAutoSyncEnabled() && BitwardenManager.hasActiveSession()) {
+                BitwardenManager.pushSingleItemAsync(serverIp, username, generatedPassword, "/login");
+            }
+
+            PlatformHelper.get().copyToClipboard(passChars);
+
+            String template = SYPassConfig.getRegisterCommandTemplate();
+            String registerCmd = template
+                    .replace("%password%", generatedPassword)
+                    .replace("%pass%", generatedPassword);
+            if (registerCmd.startsWith("/")) {
+                registerCmd = registerCmd.substring(1);
+            }
+            client.player.connection.sendCommand(registerCmd);
+        } finally {
+            Arrays.fill(passChars, '\0');
         }
-
-        PlatformHelper.get().copyToClipboard(generatedPassword);
-
-        client.player.connection.sendCommand("register " + generatedPassword + " " + generatedPassword);
 
         String titleKey = isSmart ? "sypass.toast.smartregister.title" : "sypass.toast.quickregister.title";
         String descKey = isSmart ? "sypass.toast.smartregister.desc" : "sypass.toast.quickregister.desc";

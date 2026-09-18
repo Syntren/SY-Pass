@@ -116,6 +116,11 @@ esac
 
 
 
+# Auto-detect local JDK if JAVA_HOME is not set
+if [ -z "$JAVA_HOME" ] && [ -d "$HOME/.local/share/PrismLauncher/java/java-runtime-delta" ] ; then
+    export JAVA_HOME="$HOME/.local/share/PrismLauncher/java/java-runtime-delta"
+fi
+
 # Determine the Java command to use to start the JVM.
 if [ -n "$JAVA_HOME" ] ; then
     if [ -x "$JAVA_HOME/jre/sh/java" ] ; then

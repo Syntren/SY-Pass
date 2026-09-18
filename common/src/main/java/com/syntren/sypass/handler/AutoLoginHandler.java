@@ -19,6 +19,7 @@ import java.util.regex.Pattern;
 
 public class AutoLoginHandler {
     private static int ticksToWait = -1;
+    private static int autoLockTickCounter = 0;
     private static PasswordManager.AccountData pendingEntry = null;
 
     // Session control to prevent spam across subserver/lobby transfers
@@ -126,6 +127,17 @@ public class AutoLoginHandler {
             if (client.player != null && pendingEntry != null) {
                 sendLoginCommand(client, pendingEntry, false);
                 pendingEntry = null;
+            }
+        }
+
+        if (++autoLockTickCounter >= 20) {
+            autoLockTickCounter = 0;
+            if (client != null) {
+                if (client.screen instanceof com.syntren.sypass.gui.SYPassScreen || client.screen instanceof com.syntren.sypass.gui.EditPasswordScreen) {
+                    PasswordManager.recordActivity();
+                } else {
+                    PasswordManager.checkAutoLock();
+                }
             }
         }
     }

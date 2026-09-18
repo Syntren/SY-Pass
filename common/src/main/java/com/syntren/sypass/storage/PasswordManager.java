@@ -3,8 +3,12 @@ package com.syntren.sypass.storage;
 import com.google.gson.*;
 import com.google.gson.reflect.TypeToken;
 import com.syntren.sypass.config.SYPassConfig;
+import com.syntren.sypass.gui.SYPassToast;
 import com.syntren.sypass.platform.PlatformHelper;
 import com.syntren.sypass.util.ChatProtectionMatcher;
+import net.minecraft.network.chat.Component;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
 
 import javax.crypto.Cipher;
 import javax.crypto.KeyGenerator;
@@ -100,6 +104,41 @@ public class PasswordManager {
     private static SecretKey secretKey;
     private static volatile boolean vaultLocked = false;
     private static boolean legacyFormatDetected = false;
+    private static volatile long lastActivityMs = System.currentTimeMillis();
+
+    public static void recordActivity() {
+        lastActivityMs = System.currentTimeMillis();
+    }
+
+    public static synchronized void lockVault() {
+        if (!SYPassConfig.isMasterPasswordEnabled()) return;
+        vaultLocked = true;
+        secretKey = null;
+        for (Map<String, AccountData> accs : memoryData.values()) {
+            for (AccountData d : accs.values()) {
+                d.wipe();
+            }
+        }
+        memoryData.clear();
+        ChatProtectionMatcher.invalidateCache();
+    }
+
+    public static void checkAutoLock() {
+        if (vaultLocked || !SYPassConfig.isMasterPasswordEnabled()) return;
+        int timeoutMin = SYPassConfig.getAutoLockTimeoutMinutes();
+        if (timeoutMin <= 0) return;
+        long timeoutMs = timeoutMin * 60L * 1000L;
+        if (System.currentTimeMillis() - lastActivityMs >= timeoutMs) {
+            lockVault();
+            if (SYPassConfig.isToastsEnabled()) {
+                SYPassToast.show(
+                        Component.translatable("sypass.toast.autolock.title"),
+                        Component.translatable("sypass.toast.autolock.desc"),
+                        new ItemStack(Items.IRON_DOOR)
+                );
+            }
+        }
+    }
 
     private static final int GCM_IV_LENGTH = 12;
     private static final int GCM_TAG_LENGTH_BIT = 128;
@@ -206,6 +245,7 @@ public class PasswordManager {
             Arrays.fill(rawKeyBytes, (byte) 0);
 
             vaultLocked = false;
+            recordActivity();
             loadPasswords();
             return true;
         } catch (Exception e) {
@@ -1144,7 +1184,7 @@ public class PasswordManager {
 
     public static List<String> parseCsvLine(String line) {
         List<String> result = new ArrayList<>();
-        if (line == null) return result;
+        if (line == null || line.trim().isEmpty()) return result;
         StringBuilder current = new StringBuilder();
         boolean inQuotes = false;
         for (int i = 0; i < line.length(); i++) {

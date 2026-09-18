@@ -58,6 +58,7 @@ public class SYPassConfig {
         public String masterPasswordSalt = "";
         public int masterPasswordIterations = 100000;
         public String masterPasswordVerifier = "";
+        public int autoLockTimeoutMinutes = 0;
         public String registerCommandTemplate = "/register %password% %password%";
         public List<String> customLoginPatterns = new ArrayList<>();
     }
@@ -245,6 +246,18 @@ public class SYPassConfig {
 
     public static void setMasterPasswordVerifier(String verifier) {
         data.masterPasswordVerifier = verifier != null ? verifier : "";
+        save();
+    }
+
+    public static int getAutoLockTimeoutMinutes() {
+        if (data.autoLockTimeoutMinutes < 0 || data.autoLockTimeoutMinutes > 120) {
+            data.autoLockTimeoutMinutes = 0;
+        }
+        return data.autoLockTimeoutMinutes;
+    }
+
+    public static void setAutoLockTimeoutMinutes(int minutes) {
+        data.autoLockTimeoutMinutes = Math.max(0, Math.min(120, minutes));
         save();
     }
 

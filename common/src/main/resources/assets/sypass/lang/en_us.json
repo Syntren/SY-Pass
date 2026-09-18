@@ -218,5 +218,13 @@
   "sypass.gui.settings.custom_patterns.placeholder": "Regex pattern (e.g. (?i)\\[Auth\\].*login)",
   "sypass.gui.settings.custom_patterns.added": "Custom pattern added!",
   "sypass.toast.vault_locked.title": "SY-Pass Locked",
-  "sypass.toast.vault_locked.desc": "Press [%s] to unlock your vault"
+  "sypass.toast.vault_locked.desc": "Press [%s] to unlock your vault",
+  "sypass.gui.settings.autolock": "Auto-Lock: %s",
+  "sypass.gui.settings.autolock.disabled": "Disabled",
+  "sypass.gui.settings.autolock.minutes": "%d min",
+  "sypass.gui.settings.autolock.tooltip": "Automatically lock the vault after a period of inactivity",
+  "sypass.gui.settings.master_pass.lock_now": "🔒 Lock Vault Now",
+  "sypass.gui.settings.master_pass.lock_now.tooltip": "Immediately lock your vault and wipe credentials from memory",
+  "sypass.toast.autolock.title": "Vault Locked",
+  "sypass.toast.autolock.desc": "Vault locked due to inactivity"
 }

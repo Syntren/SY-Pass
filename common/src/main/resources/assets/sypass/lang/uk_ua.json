@@ -218,5 +218,13 @@
   "sypass.gui.settings.custom_patterns.placeholder": "Regex патерн (напр. (?i)\\[Auth\\].*login)",
   "sypass.gui.settings.custom_patterns.added": "Патерн додано!",
   "sypass.toast.vault_locked.title": "SY-Pass заблоковано",
-  "sypass.toast.vault_locked.desc": "Натисніть [%s] для розблокування"
+  "sypass.toast.vault_locked.desc": "Натисніть [%s] для розблокування",
+  "sypass.gui.settings.autolock": "Автоблокування: %s",
+  "sypass.gui.settings.autolock.disabled": "Вимкнено",
+  "sypass.gui.settings.autolock.minutes": "%d хв",
+  "sypass.gui.settings.autolock.tooltip": "Автоматично блокувати сховище після періоду бездіяльності",
+  "sypass.gui.settings.master_pass.lock_now": "🔒 Заблокувати сховище",
+  "sypass.gui.settings.master_pass.lock_now.tooltip": "Негайно заблокувати сховище та очистити паролі з пам'яті",
+  "sypass.toast.autolock.title": "Сховище заблоковано",
+  "sypass.toast.autolock.desc": "Сховище заблоковано через бездіяльність"
 }

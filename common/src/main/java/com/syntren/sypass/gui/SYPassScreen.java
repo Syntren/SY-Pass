@@ -146,6 +146,7 @@ public class SYPassScreen extends Screen {
     @Override
     protected void init() {
         super.init();
+        PasswordManager.recordActivity();
 
         int contentWidth = Math.min(440, this.width - 32);
         int contentX = (this.width - contentWidth) / 2;
@@ -1157,7 +1158,7 @@ public class SYPassScreen extends Screen {
                         }
                     }).bounds(cardX, y + 75, cardWidth, 20).build());
                 } else {
-                    this.mpNewPassBox = new EditBox(this.font, cardX, y + 25, cardWidth, 20, Component.translatable("sypass.gui.settings.master_pass.enter_pass"));
+                    this.mpNewPassBox = new EditBox(this.font, cardX, y + 20, cardWidth, 20, Component.translatable("sypass.gui.settings.master_pass.enter_pass"));
                     this.mpNewPassBox.setMaxLength(128);
                     this.mpNewPassBox.setHint(Component.translatable("sypass.gui.settings.master_pass.enter_pass"));
                     addRenderableWidget(this.mpNewPassBox);
@@ -1172,14 +1173,46 @@ public class SYPassScreen extends Screen {
                         } else {
                             setStatusMessage("§c" + Component.translatable("sypass.gui.lock.wrong_pass").getString());
                         }
-                    }).bounds(cardX, y + 50, cardWidth, 20).build());
-                }
+                    }).bounds(cardX, y + 44, cardWidth, 20).build());
 
-                addRenderableWidget(Button.builder(Component.translatable("sypass.gui.bw.otp.back"), b -> {
-                    this.settingsStage = SettingsStage.MAIN;
-                    clearWidgets();
-                    init();
-                }).bounds(cardX, y + 105, cardWidth, 20).build());
+                    int currentTimeout = SYPassConfig.getAutoLockTimeoutMinutes();
+                    Component timeoutText = (currentTimeout == 0)
+                            ? Component.translatable("sypass.gui.settings.autolock", Component.translatable("sypass.gui.settings.autolock.disabled").getString())
+                            : Component.translatable("sypass.gui.settings.autolock", Component.translatable("sypass.gui.settings.autolock.minutes", currentTimeout).getString());
+
+                    Button autoLockBtn = Button.builder(timeoutText, b -> {
+                        int cur = SYPassConfig.getAutoLockTimeoutMinutes();
+                        int next = switch (cur) {
+                            case 0 -> 5;
+                            case 5 -> 10;
+                            case 10 -> 15;
+                            case 15 -> 30;
+                            case 30 -> 60;
+                            default -> 0;
+                        };
+                        SYPassConfig.setAutoLockTimeoutMinutes(next);
+                        Component newTxt = (next == 0)
+                                ? Component.translatable("sypass.gui.settings.autolock", Component.translatable("sypass.gui.settings.autolock.disabled").getString())
+                                : Component.translatable("sypass.gui.settings.autolock", Component.translatable("sypass.gui.settings.autolock.minutes", next).getString());
+                        b.setMessage(newTxt);
+                    }).bounds(cardX, y + 68, cardWidth, 20).build();
+                    autoLockBtn.setTooltip(Tooltip.create(Component.translatable("sypass.gui.settings.autolock.tooltip")));
+                    addRenderableWidget(autoLockBtn);
+
+                    Button lockNowBtn = Button.builder(Component.translatable("sypass.gui.settings.master_pass.lock_now"), b -> {
+                        PasswordManager.lockVault();
+                        clearWidgets();
+                        init();
+                    }).bounds(cardX, y + 92, cardWidth, 20).build();
+                    lockNowBtn.setTooltip(Tooltip.create(Component.translatable("sypass.gui.settings.master_pass.lock_now.tooltip")));
+                    addRenderableWidget(lockNowBtn);
+
+                    addRenderableWidget(Button.builder(Component.translatable("sypass.gui.bw.otp.back"), b -> {
+                        this.settingsStage = SettingsStage.MAIN;
+                        clearWidgets();
+                        init();
+                    }).bounds(cardX, y + 118, cardWidth, 20).build());
+                }
             }
             case LOGIN_PATTERNS -> {
                 // Section 1: Template & Presets

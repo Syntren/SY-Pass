@@ -135,7 +135,7 @@ public class SYPassNeoForge {
 
     @SubscribeEvent
     public void onClientChat(ClientChatEvent event) {
-        if (!checkLeakAndNotify(event.getMessage())) {
+        if (!checkLeakAndNotify(event.getMessage(), false)) {
             event.setCanceled(true);
         }
     }
@@ -150,7 +150,7 @@ public class SYPassNeoForge {
                 if (child instanceof net.minecraft.client.gui.components.EditBox editBox) {
                     String text = editBox.getValue();
                     if (text != null && text.startsWith("/")) {
-                        if (!checkLeakAndNotify(text.substring(1))) {
+                        if (!checkLeakAndNotify(text.substring(1), true)) {
                             event.setCanceled(true);
                             return;
                         }
@@ -160,8 +160,12 @@ public class SYPassNeoForge {
         }
     }
 
-    private static boolean checkLeakAndNotify(String message) {
+    private static boolean checkLeakAndNotify(String message, boolean isCommand) {
         if (!SYPassConfig.isChatLeakProtectionEnabled() || message == null || message.isBlank()) {
+            return true;
+        }
+
+        if (isCommand && AutoLoginHandler.isDispatchingAuth()) {
             return true;
         }
 
@@ -171,6 +175,10 @@ public class SYPassNeoForge {
 
         ServerData server = client.getCurrentServer();
         String serverAddress = (server != null && server.ip != null) ? server.ip : "";
+
+        if (isCommand && ChatProtectionMatcher.isAuthCommand(message, serverAddress)) {
+            return true;
+        }
 
         boolean leaks = ChatProtectionMatcher.checkMessageLeaks(
                 message,

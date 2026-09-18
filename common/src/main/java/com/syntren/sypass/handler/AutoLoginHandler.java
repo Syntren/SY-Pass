@@ -21,6 +21,11 @@ public class AutoLoginHandler {
     private static int ticksToWait = -1;
     private static int autoLockTickCounter = 0;
     private static PasswordManager.AccountData pendingEntry = null;
+    private static volatile boolean isDispatchingAuth = false;
+
+    public static boolean isDispatchingAuth() {
+        return isDispatchingAuth;
+    }
 
     // Session control to prevent spam across subserver/lobby transfers
     private static String activeServerAddress = null;
@@ -246,9 +251,11 @@ public class AutoLoginHandler {
         if (passChars.length == 0) return;
 
         try {
+            isDispatchingAuth = true;
             String fullCommand = cmd + " " + new String(passChars);
             client.player.connection.sendCommand(fullCommand);
         } finally {
+            isDispatchingAuth = false;
             Arrays.fill(passChars, '\0');
         }
 
@@ -308,9 +315,11 @@ public class AutoLoginHandler {
             if (passChars.length == 0) return;
 
             try {
+                isDispatchingAuth = true;
                 String fullCommand = cmd + " " + new String(passChars);
                 client.player.connection.sendCommand(fullCommand);
             } finally {
+                isDispatchingAuth = false;
                 Arrays.fill(passChars, '\0');
             }
 
@@ -400,8 +409,10 @@ public class AutoLoginHandler {
             if (registerCmd.startsWith("/")) {
                 registerCmd = registerCmd.substring(1);
             }
+            isDispatchingAuth = true;
             client.player.connection.sendCommand(registerCmd);
         } finally {
+            isDispatchingAuth = false;
             Arrays.fill(passChars, '\0');
         }
 

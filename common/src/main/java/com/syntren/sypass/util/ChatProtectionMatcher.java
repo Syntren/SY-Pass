@@ -156,4 +156,62 @@ public class ChatProtectionMatcher {
             return auto.containsAny(message);
         }
     }
+
+    public static boolean isAuthCommand(String command, String serverAddress) {
+        if (command == null || command.isBlank()) return false;
+        String clean = command.trim();
+        if (clean.startsWith("/")) {
+            clean = clean.substring(1).trim();
+        }
+        String lower = clean.toLowerCase(Locale.ROOT);
+
+        // 1. Standard authentication and registration commands
+        if (lower.startsWith("login ") || lower.equals("login") ||
+            lower.startsWith("l ") || lower.equals("l") ||
+            lower.startsWith("register ") || lower.equals("register") ||
+            lower.startsWith("reg ") || lower.equals("reg") ||
+            lower.startsWith("auth ") || lower.equals("auth") ||
+            lower.startsWith("changepassword ") || lower.startsWith("changepass ") ||
+            lower.startsWith("cp ") || lower.startsWith("unregister ")) {
+            return true;
+        }
+
+        // 2. Custom registration template command
+        String regTemplate = SYPassConfig.getRegisterCommandTemplate();
+        if (regTemplate != null && !regTemplate.isBlank()) {
+            String tmplClean = regTemplate.trim();
+            if (tmplClean.startsWith("/")) tmplClean = tmplClean.substring(1).trim();
+            int spaceIdx = tmplClean.indexOf(' ');
+            String tmplPrefix = (spaceIdx > 0 ? tmplClean.substring(0, spaceIdx) : tmplClean).toLowerCase(Locale.ROOT);
+            if (!tmplPrefix.isEmpty() && (lower.startsWith(tmplPrefix + " ") || lower.equals(tmplPrefix))) {
+                return true;
+            }
+        }
+
+        // 3. User's configured custom login command for this server
+        if (serverAddress != null && !serverAddress.isBlank()) {
+            try {
+                net.minecraft.client.Minecraft client = net.minecraft.client.Minecraft.getInstance();
+                if (client != null && client.getUser() != null) {
+                    String username = client.getUser().getName();
+                    if (username != null && !username.isBlank()) {
+                        PasswordManager.AccountData acc = PasswordManager.getPassword(serverAddress, username);
+                        if (acc != null && acc.command() != null) {
+                            String customCmd = acc.command().trim();
+                            if (customCmd.startsWith("/")) customCmd = customCmd.substring(1).trim();
+                            int spaceIdx = customCmd.indexOf(' ');
+                            String customPrefix = (spaceIdx > 0 ? customCmd.substring(0, spaceIdx) : customCmd).toLowerCase(Locale.ROOT);
+                            if (!customPrefix.isEmpty() && (lower.startsWith(customPrefix + " ") || lower.equals(customPrefix))) {
+                                return true;
+                            }
+                        }
+                    }
+                }
+            } catch (Throwable ignored) {
+                // Ignore in headless / test environment
+            }
+        }
+
+        return false;
+    }
 }

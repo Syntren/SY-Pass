@@ -68,4 +68,28 @@ class ChatProtectionMatcherTest {
         );
         assertFalse(leaks, "Benign chat messages must not be blocked");
     }
+
+    @Test
+    @DisplayName("Standard authentication and registration commands are recognized as auth commands")
+    void testRecognizedAuthCommands() {
+        assertTrue(ChatProtectionMatcher.isAuthCommand("login TopSecretPass999", "hypixel.net"));
+        assertTrue(ChatProtectionMatcher.isAuthCommand("/login TopSecretPass999", "hypixel.net"));
+        assertTrue(ChatProtectionMatcher.isAuthCommand("l TopSecretPass999", "hypixel.net"));
+        assertTrue(ChatProtectionMatcher.isAuthCommand("/l TopSecretPass999", "hypixel.net"));
+        assertTrue(ChatProtectionMatcher.isAuthCommand("register pass pass", "hypixel.net"));
+        assertTrue(ChatProtectionMatcher.isAuthCommand("/reg pass", "hypixel.net"));
+        assertTrue(ChatProtectionMatcher.isAuthCommand("auth pass", "hypixel.net"));
+        assertTrue(ChatProtectionMatcher.isAuthCommand("/changepassword old new", "hypixel.net"));
+    }
+
+    @Test
+    @DisplayName("Non-authentication commands like /msg or /say are not recognized as auth commands")
+    void testNonAuthCommands() {
+        assertFalse(ChatProtectionMatcher.isAuthCommand("msg friend TopSecretPass999", "hypixel.net"));
+        assertFalse(ChatProtectionMatcher.isAuthCommand("/tell friend TopSecretPass999", "hypixel.net"));
+        assertFalse(ChatProtectionMatcher.isAuthCommand("/w friend TopSecretPass999", "hypixel.net"));
+        assertFalse(ChatProtectionMatcher.isAuthCommand("say TopSecretPass999", "hypixel.net"));
+        assertFalse(ChatProtectionMatcher.isAuthCommand(null, "hypixel.net"));
+        assertFalse(ChatProtectionMatcher.isAuthCommand("", "hypixel.net"));
+    }
 }

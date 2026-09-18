@@ -108,22 +108,31 @@ public class SYPassFabric implements ClientModInitializer {
         });
 
         // 7. Захист від витоку паролів у чат та команди
-        ClientSendMessageEvents.ALLOW_CHAT.register(SYPassFabric::checkLeakAndNotify);
-        ClientSendMessageEvents.ALLOW_COMMAND.register(SYPassFabric::checkLeakAndNotify);
+        ClientSendMessageEvents.ALLOW_CHAT.register(message -> checkLeakAndNotify(message, false));
+        ClientSendMessageEvents.ALLOW_COMMAND.register(command -> checkLeakAndNotify(command, true));
 
         // 8. Очищення кешу іконок при зупинці гри
         ClientLifecycleEvents.CLIENT_STOPPING.register(client -> ServerIconManager.clearCache());
     }
 
-    private static boolean checkLeakAndNotify(String message) {
+    private static boolean checkLeakAndNotify(String message, boolean isCommand) {
         if (!SYPassConfig.isChatLeakProtectionEnabled() || message == null || message.isBlank()) {
             return true;
         }
+
+        if (isCommand && AutoLoginHandler.isDispatchingAuth()) {
+            return true;
+        }
+
         Minecraft client = Minecraft.getInstance();
         if (client == null || client.player == null) return true;
 
         ServerData server = client.getCurrentServer();
         String serverAddress = (server != null) ? server.ip : "";
+
+        if (isCommand && ChatProtectionMatcher.isAuthCommand(message, serverAddress)) {
+            return true;
+        }
 
         boolean leaks = ChatProtectionMatcher.checkMessageLeaks(
                 message,

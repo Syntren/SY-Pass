@@ -9,6 +9,8 @@ import java.io.FileReader;
 import java.io.FileWriter;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
 
 public class SYPassConfig {
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
@@ -51,6 +53,12 @@ public class SYPassConfig {
         public boolean chatLeakProtection = false;
         public ChatProtectionScope chatProtectionScope = ChatProtectionScope.CURRENT_SERVER;
         public int defaultPasswordLength = 16;
+        public boolean masterPasswordEnabled = false;
+        public String masterPasswordSalt = "";
+        public int masterPasswordIterations = 100000;
+        public String masterPasswordVerifier = "";
+        public String registerCommandTemplate = "/register %password% %password%";
+        public List<String> customLoginPatterns = new ArrayList<>();
     }
 
     public static void load() {
@@ -201,5 +209,84 @@ public class SYPassConfig {
     public static void setBitwardenEnabled(boolean enabled) {
         data.enableBitwarden = enabled;
         save();
+    }
+
+    public static boolean isMasterPasswordEnabled() {
+        return data.masterPasswordEnabled;
+    }
+
+    public static void setMasterPasswordEnabled(boolean enabled) {
+        data.masterPasswordEnabled = enabled;
+        save();
+    }
+
+    public static String getMasterPasswordSalt() {
+        return data.masterPasswordSalt != null ? data.masterPasswordSalt : "";
+    }
+
+    public static void setMasterPasswordSalt(String salt) {
+        data.masterPasswordSalt = salt != null ? salt : "";
+        save();
+    }
+
+    public static int getMasterPasswordIterations() {
+        return data.masterPasswordIterations > 0 ? data.masterPasswordIterations : 100000;
+    }
+
+    public static void setMasterPasswordIterations(int iterations) {
+        data.masterPasswordIterations = Math.max(10000, iterations);
+        save();
+    }
+
+    public static String getMasterPasswordVerifier() {
+        return data.masterPasswordVerifier != null ? data.masterPasswordVerifier : "";
+    }
+
+    public static void setMasterPasswordVerifier(String verifier) {
+        data.masterPasswordVerifier = verifier != null ? verifier : "";
+        save();
+    }
+
+    public static String getRegisterCommandTemplate() {
+        if (data.registerCommandTemplate == null || data.registerCommandTemplate.isBlank()) {
+            data.registerCommandTemplate = "/register %password% %password%";
+        }
+        return data.registerCommandTemplate;
+    }
+
+    public static void setRegisterCommandTemplate(String template) {
+        data.registerCommandTemplate = (template != null && !template.isBlank()) ? template.trim() : "/register %password% %password%";
+        save();
+    }
+
+    public static List<String> getCustomLoginPatterns() {
+        if (data.customLoginPatterns == null) {
+            data.customLoginPatterns = new ArrayList<>();
+        }
+        return data.customLoginPatterns;
+    }
+
+    public static void setCustomLoginPatterns(List<String> patterns) {
+        data.customLoginPatterns = patterns != null ? new ArrayList<>(patterns) : new ArrayList<>();
+        save();
+    }
+
+    public static void addCustomLoginPattern(String pattern) {
+        if (pattern != null && !pattern.isBlank()) {
+            if (data.customLoginPatterns == null) {
+                data.customLoginPatterns = new ArrayList<>();
+            }
+            if (!data.customLoginPatterns.contains(pattern.trim())) {
+                data.customLoginPatterns.add(pattern.trim());
+                save();
+            }
+        }
+    }
+
+    public static void removeCustomLoginPattern(String pattern) {
+        if (data.customLoginPatterns != null && pattern != null) {
+            data.customLoginPatterns.remove(pattern.trim());
+            save();
+        }
     }
 }

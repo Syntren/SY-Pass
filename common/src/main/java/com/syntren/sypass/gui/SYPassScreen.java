@@ -50,7 +50,9 @@ public class SYPassScreen extends Screen {
         MAIN,
         CHAT_PROTECTION,
         BACKUP,
-        BITWARDEN
+        BITWARDEN,
+        MASTER_PASSWORD,
+        LOGIN_PATTERNS
     }
 
     public enum SortMode {
@@ -116,6 +118,12 @@ public class SYPassScreen extends Screen {
     // Backup input
     private EditBox backupPassBox;
 
+    // Master password & pattern inputs
+    private EditBox mpNewPassBox;
+    private EditBox mpConfirmPassBox;
+    private EditBox regTemplateBox;
+    private EditBox newPatternBox;
+
     public SYPassScreen() {
         this(null);
     }
@@ -141,6 +149,11 @@ public class SYPassScreen extends Screen {
 
         int contentWidth = Math.min(440, this.width - 32);
         int contentX = (this.width - contentWidth) / 2;
+
+        if (PasswordManager.isVaultLocked()) {
+            initVaultLockScreen(contentX, contentWidth);
+            return;
+        }
 
         if (!SYPassConfig.isBitwardenEnabled() && activeTab == Tab.BITWARDEN) {
             activeTab = Tab.LOCAL_PASSWORDS;
@@ -188,6 +201,43 @@ public class SYPassScreen extends Screen {
             case BITWARDEN -> initBitwardenTab(contentX, contentWidth);
             case SETTINGS -> initSettingsTab(contentX, contentWidth);
         }
+    }
+
+    private void initVaultLockScreen(int contentX, int contentWidth) {
+        int cardWidth = Math.min(280, contentWidth);
+        int cardX = (this.width - cardWidth) / 2;
+        int y = (this.height - 120) / 2;
+
+        EditBox unlockPassBox = new EditBox(this.font, cardX, y + 25, cardWidth, 20, Component.translatable("sypass.gui.lock.desc"));
+        unlockPassBox.setMaxLength(128);
+        unlockPassBox.setHint(Component.translatable("sypass.gui.lock.desc"));
+        unlockPassBox.setFocused(true);
+        addRenderableWidget(unlockPassBox);
+
+        Button unlockBtn = Button.builder(Component.translatable("sypass.gui.lock.unlock_btn"), b -> {
+            String val = unlockPassBox.getValue();
+            if (val.isBlank()) return;
+            char[] chars = val.toCharArray();
+            if (PasswordManager.unlockVault(chars)) {
+                setStatusMessage("");
+                clearWidgets();
+                init();
+            } else {
+                setStatusMessage("§c" + Component.translatable("sypass.gui.lock.wrong_pass").getString());
+            }
+        }).bounds(cardX, y + 52, cardWidth, 20).build();
+        addRenderableWidget(unlockBtn);
+
+        Button resetBtn = Button.builder(Component.translatable("sypass.gui.lock.reset_btn"), b -> {
+            if (PasswordManager.resetVaultWithBitwarden()) {
+                setStatusMessage("§aVault reset. Unlocked.");
+                clearWidgets();
+                init();
+            }
+        }).bounds(cardX, y + 78, cardWidth, 20)
+          .tooltip(Tooltip.create(Component.translatable("sypass.gui.lock.reset_confirm")))
+          .build();
+        addRenderableWidget(resetBtn);
     }
 
     private void switchTab(Tab tab) {
@@ -892,7 +942,33 @@ public class SYPassScreen extends Screen {
                 addRenderableWidget(bwMenuBtn);
 
                 y += 24;
-                // Рядок 6: Відкрити папку config/sypass — ширина точно збігається з 2 колонками вище (cardWidth)
+                // Рядок 6: Майстер-пароль (ліворуч) та Шаблони авто-входу (праворуч)
+                boolean mpEnabled = SYPassConfig.isMasterPasswordEnabled();
+                String mpStatusStr = mpEnabled ? "§a" + Component.translatable("sypass.gui.settings.on").getString() : "§7" + Component.translatable("sypass.gui.settings.off").getString();
+                Button masterPassBtn = Button.builder(
+                        Component.translatable("sypass.gui.settings.master_pass.menu_btn", mpStatusStr),
+                        b -> {
+                            this.settingsStage = SettingsStage.MASTER_PASSWORD;
+                            clearWidgets();
+                            init();
+                        }
+                ).bounds(cardX, y, colWidth, 20)
+                 .tooltip(Tooltip.create(Component.translatable("sypass.gui.settings.master_pass.tooltip"))).build();
+                addRenderableWidget(masterPassBtn);
+
+                Button patternsBtn = Button.builder(
+                        Component.translatable("sypass.gui.settings.patterns.menu_btn"),
+                        b -> {
+                            this.settingsStage = SettingsStage.LOGIN_PATTERNS;
+                            clearWidgets();
+                            init();
+                        }
+                ).bounds(cardX + colWidth + gap, y, colWidth, 20)
+                 .tooltip(Tooltip.create(Component.translatable("sypass.gui.settings.patterns.tooltip"))).build();
+                addRenderableWidget(patternsBtn);
+
+                y += 24;
+                // Рядок 7: Відкрити папку config/sypass — ширина точно збігається з 2 колонками вище (cardWidth)
                 Button openFolderBtn = Button.builder(Component.translatable("sypass.gui.bw.button.open_folder"), b -> {
                     File dir = PlatformHelper.get().getConfigDir().resolve("sypass").toFile();
                     Util.getPlatform().openFile(dir);
@@ -1047,6 +1123,96 @@ public class SYPassScreen extends Screen {
                     init();
                 }).bounds(cardX, y + 135, cardWidth, 20).build());
             }
+            case MASTER_PASSWORD -> {
+                boolean mpEn = SYPassConfig.isMasterPasswordEnabled();
+                if (!mpEn) {
+                    this.mpNewPassBox = new EditBox(this.font, cardX, y + 25, cardWidth, 20, Component.translatable("sypass.gui.settings.master_pass.enter_pass"));
+                    this.mpNewPassBox.setMaxLength(128);
+                    this.mpNewPassBox.setHint(Component.translatable("sypass.gui.settings.master_pass.enter_pass"));
+                    addRenderableWidget(this.mpNewPassBox);
+
+                    this.mpConfirmPassBox = new EditBox(this.font, cardX, y + 50, cardWidth, 20, Component.translatable("sypass.gui.settings.master_pass.confirm_pass"));
+                    this.mpConfirmPassBox.setMaxLength(128);
+                    this.mpConfirmPassBox.setHint(Component.translatable("sypass.gui.settings.master_pass.confirm_pass"));
+                    addRenderableWidget(this.mpConfirmPassBox);
+
+                    addRenderableWidget(Button.builder(Component.translatable("sypass.gui.settings.master_pass.setup"), b -> {
+                        String p1 = (this.mpNewPassBox != null) ? this.mpNewPassBox.getValue() : "";
+                        String p2 = (this.mpConfirmPassBox != null) ? this.mpConfirmPassBox.getValue() : "";
+                        if (p1.length() < 4) {
+                            setStatusMessage("§cPassword too short (min 4 chars)!");
+                            return;
+                        }
+                        if (!p1.equals(p2)) {
+                            setStatusMessage("§c" + Component.translatable("sypass.gui.settings.master_pass.mismatch").getString());
+                            return;
+                        }
+                        if (PasswordManager.enableMasterPassword(p1.toCharArray())) {
+                            setStatusMessage("§a" + Component.translatable("sypass.gui.settings.master_pass.success_on").getString());
+                            this.settingsStage = SettingsStage.MAIN;
+                            clearWidgets();
+                            init();
+                        } else {
+                            setStatusMessage("§cFailed to enable Master Password!");
+                        }
+                    }).bounds(cardX, y + 75, cardWidth, 20).build());
+                } else {
+                    this.mpNewPassBox = new EditBox(this.font, cardX, y + 25, cardWidth, 20, Component.translatable("sypass.gui.settings.master_pass.enter_pass"));
+                    this.mpNewPassBox.setMaxLength(128);
+                    this.mpNewPassBox.setHint(Component.translatable("sypass.gui.settings.master_pass.enter_pass"));
+                    addRenderableWidget(this.mpNewPassBox);
+
+                    addRenderableWidget(Button.builder(Component.translatable("sypass.gui.settings.master_pass.remove"), b -> {
+                        String p1 = (this.mpNewPassBox != null) ? this.mpNewPassBox.getValue() : "";
+                        if (PasswordManager.disableMasterPassword(p1.toCharArray())) {
+                            setStatusMessage("§a" + Component.translatable("sypass.gui.settings.master_pass.success_off").getString());
+                            this.settingsStage = SettingsStage.MAIN;
+                            clearWidgets();
+                            init();
+                        } else {
+                            setStatusMessage("§c" + Component.translatable("sypass.gui.lock.wrong_pass").getString());
+                        }
+                    }).bounds(cardX, y + 50, cardWidth, 20).build());
+                }
+
+                addRenderableWidget(Button.builder(Component.translatable("sypass.gui.bw.otp.back"), b -> {
+                    this.settingsStage = SettingsStage.MAIN;
+                    clearWidgets();
+                    init();
+                }).bounds(cardX, y + 105, cardWidth, 20).build());
+            }
+            case LOGIN_PATTERNS -> {
+                this.regTemplateBox = new EditBox(this.font, cardX, y + 25, cardWidth - 65, 20, Component.translatable("sypass.gui.settings.reg_template.title"));
+                this.regTemplateBox.setMaxLength(128);
+                this.regTemplateBox.setValue(SYPassConfig.getRegisterCommandTemplate());
+                addRenderableWidget(this.regTemplateBox);
+
+                addRenderableWidget(Button.builder(Component.translatable("sypass.gui.button.save"), b -> {
+                    if (this.regTemplateBox != null) {
+                        SYPassConfig.setRegisterCommandTemplate(this.regTemplateBox.getValue().trim());
+                        setStatusMessage("§a" + Component.translatable("sypass.gui.settings.reg_template.saved").getString());
+                    }
+                }).bounds(cardX + cardWidth - 60, y + 25, 60, 20).build());
+
+                this.newPatternBox = new EditBox(this.font, cardX, y + 65, cardWidth - 65, 20, Component.translatable("sypass.gui.settings.custom_patterns.title"));
+                this.newPatternBox.setMaxLength(128);
+                this.newPatternBox.setHint(Component.translatable("sypass.gui.settings.custom_patterns.placeholder"));
+                addRenderableWidget(this.newPatternBox);
+
+                addRenderableWidget(Button.builder(Component.literal("+"), b -> {
+                    if (this.newPatternBox != null && !this.newPatternBox.getValue().isBlank()) {
+                        SYPassConfig.addCustomLoginPattern(this.newPatternBox.getValue().trim());
+                        this.newPatternBox.setValue("");
+                        setStatusMessage("§a" + Component.translatable("sypass.gui.settings.custom_patterns.added").getString());
+                    }
+                }).bounds(cardX + cardWidth - 60, y + 65, 60, 20).build());
+
+                addRenderableWidget(Button.builder(Component.translatable("sypass.gui.bw.otp.back"), b -> {
+                    this.settingsStage = SettingsStage.MAIN;
+                    clearWidgets();
+                    init();
+                }).bounds(cardX, y + 105, cardWidth, 20).build());
+            }
         }
 
         addRenderableWidget(Button.builder(Component.translatable("sypass.gui.button.close"), btn -> onClose())
@@ -1056,6 +1222,15 @@ public class SYPassScreen extends Screen {
     @Override
     public void render(GuiGraphics guiGraphics, int mouseX, int mouseY, float partialTick) {
         super.render(guiGraphics, mouseX, mouseY, partialTick);
+
+        if (PasswordManager.isVaultLocked()) {
+            int y = (this.height - 120) / 2;
+            guiGraphics.drawCenteredString(this.font, Component.translatable("sypass.gui.lock.title").withStyle(ChatFormatting.GOLD, ChatFormatting.BOLD), this.width / 2, y + 5, 0xFFFFFF);
+            if (statusMessage != null && !statusMessage.isBlank()) {
+                guiGraphics.drawCenteredString(this.font, Component.literal(statusMessage), this.width / 2, y + 105, 0xFFFFFF);
+            }
+            return;
+        }
 
         int contentWidth = Math.min(440, this.width - 32);
 
@@ -1093,6 +1268,13 @@ public class SYPassScreen extends Screen {
             } else if (settingsStage == SettingsStage.BITWARDEN) {
                 boolean bwEn = SYPassConfig.isBitwardenEnabled();
                 guiGraphics.drawString(this.font, Component.translatable("sypass.gui.settings.server_url"), cardX, startY + 74, bwEn ? 0xCCCCCC : 0x777777, true);
+            } else if (settingsStage == SettingsStage.MASTER_PASSWORD) {
+                boolean mpEn = SYPassConfig.isMasterPasswordEnabled();
+                String titleKey = mpEn ? "sypass.gui.settings.master_pass.remove" : "sypass.gui.settings.master_pass.setup";
+                guiGraphics.drawCenteredString(this.font, Component.translatable(titleKey).withStyle(ChatFormatting.GOLD, ChatFormatting.BOLD), this.width / 2, startY + 4, 0xFFFFFF);
+            } else if (settingsStage == SettingsStage.LOGIN_PATTERNS) {
+                guiGraphics.drawString(this.font, Component.translatable("sypass.gui.settings.reg_template.title"), cardX, startY + 12, 0xCCCCCC, true);
+                guiGraphics.drawString(this.font, Component.translatable("sypass.gui.settings.custom_patterns.title"), cardX, startY + 52, 0xCCCCCC, true);
             }
         }
 
@@ -1275,7 +1457,7 @@ public class SYPassScreen extends Screen {
                 // 2. Кнопка Копіювати (📋)
                 this.copyBtn = Button.builder(Component.literal("📋"), btn -> {
                     PasswordManager.updateLastUsed(serverIp, username);
-                    PlatformHelper.get().copyToClipboard(data.password());
+                    PasswordManager.copyPasswordToClipboard(serverIp, username);
                     screen.setStatusMessage(Component.translatable("sypass.gui.status.copied", username).getString());
                 }).bounds(0, 0, 20, 20)
                   .tooltip(Tooltip.create(Component.translatable("sypass.gui.button.copy.tooltip")))
@@ -1301,7 +1483,9 @@ public class SYPassScreen extends Screen {
                 // 4. Кнопка Редагувати (✎)
                 this.editBtn = Button.builder(Component.literal("✎"), btn -> {
                     if (screen.minecraft != null) {
-                        screen.minecraft.setScreen(new EditPasswordScreen(screen, serverIp, username, data.password(), data.command(), data.isSynced()));
+                        PasswordManager.AccountData realAcc = PasswordManager.getPassword(serverIp, username);
+                        String pass = (realAcc != null) ? realAcc.getPasswordAsString() : "";
+                        screen.minecraft.setScreen(new EditPasswordScreen(screen, serverIp, username, pass, data.command(), data.isSynced()));
                     }
                 }).bounds(0, 0, 20, 20)
                   .tooltip(Tooltip.create(Component.translatable("sypass.gui.button.edit.tooltip")))
@@ -1417,7 +1601,13 @@ public class SYPassScreen extends Screen {
 
                 boolean isRevealed = screen.revealedPasswords.contains(key);
                 String userTitle = isActiveAccount ? "§a§l" + username : "§e" + username;
-                String passTitle = isRevealed ? " §b" + data.password() : " §7••••••••";
+                String passTitle;
+                if (isRevealed) {
+                    PasswordManager.AccountData realAcc = PasswordManager.getPassword(serverIp, username);
+                    passTitle = (realAcc != null) ? " §b" + realAcc.getPasswordAsString() : " §b";
+                } else {
+                    passTitle = " §7••••••••";
+                }
                 guiGraphics.drawString(font, Component.literal(userTitle + passTitle), textX, cardY + 16, 0xFFFFFF, true);
 
                 // Рядок /login тепер має 6px відступу від нижнього краю картки

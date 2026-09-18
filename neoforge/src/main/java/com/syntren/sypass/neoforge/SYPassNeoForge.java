@@ -127,27 +127,47 @@ public class SYPassNeoForge {
         AutoLoginHandler.onDisconnect();
     }
 
+    // Only process system and game messages to prevent spoofing via player chat
     @SubscribeEvent
     public void onChatReceived(ClientChatReceivedEvent.System event) {
         AutoLoginHandler.onIncomingMessage(event.getMessage().getString(), Minecraft.getInstance());
     }
 
     @SubscribeEvent
-    public void onChatReceived(ClientChatReceivedEvent.Player event) {
-        AutoLoginHandler.onIncomingMessage(event.getMessage().getString(), Minecraft.getInstance());
+    public void onClientChat(ClientChatEvent event) {
+        if (!checkLeakAndNotify(event.getMessage())) {
+            event.setCanceled(true);
+        }
     }
 
-    @SuppressWarnings("all")
     @SubscribeEvent
-    public void onClientChat(ClientChatEvent event) {
+    public void onScreenKeyPressed(ScreenEvent.KeyPressed.Pre event) {
         if (!SYPassConfig.isChatLeakProtectionEnabled()) return;
+        if (event.getKeyCode() != GLFW.GLFW_KEY_ENTER && event.getKeyCode() != GLFW.GLFW_KEY_KP_ENTER) return;
 
-        String message = event.getMessage();
-        if (message == null || message.isBlank()) return;
+        if (event.getScreen() instanceof net.minecraft.client.gui.screens.ChatScreen chatScreen) {
+            for (var child : chatScreen.children()) {
+                if (child instanceof net.minecraft.client.gui.components.EditBox editBox) {
+                    String text = editBox.getValue();
+                    if (text != null && text.startsWith("/")) {
+                        if (!checkLeakAndNotify(text.substring(1))) {
+                            event.setCanceled(true);
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private static boolean checkLeakAndNotify(String message) {
+        if (!SYPassConfig.isChatLeakProtectionEnabled() || message == null || message.isBlank()) {
+            return true;
+        }
 
         Minecraft client = Minecraft.getInstance();
         var player = client.player;
-        if (player == null) return;
+        if (player == null) return true;
 
         ServerData server = client.getCurrentServer();
         String serverAddress = (server != null && server.ip != null) ? server.ip : "";
@@ -159,12 +179,14 @@ public class SYPassNeoForge {
         );
 
         if (leaks) {
-            event.setCanceled(true);
             String msgKey = (SYPassConfig.getChatProtectionScope() == SYPassConfig.ChatProtectionScope.ALL_SERVERS)
                     ? "sypass.chat.blocked_leak_all"
                     : "sypass.chat.blocked_leak";
             Component chatMessage = Component.translatable(msgKey).withStyle(ChatFormatting.RED);
             player.displayClientMessage(Objects.requireNonNull(chatMessage), false);
+            return false;
         }
+
+        return true;
     }
 }

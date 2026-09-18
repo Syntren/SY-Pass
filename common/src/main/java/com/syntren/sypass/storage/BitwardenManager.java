@@ -600,8 +600,7 @@ public class BitwardenManager {
                             PasswordManager.savePassword(serverIp, username, password, command, true, id);
                             remoteKeys.add(key);
                         } else {
-                            LOGGER.info("[SYPass] Removing redundant duplicate item in Bitwarden: id={}, server={}, user={}", id, serverIp, username);
-                            executeBwCommand("delete", "item", id, "--permanent");
+                            LOGGER.warn("[SYPass] Skipping duplicate item found in Bitwarden vault: id={}, server={}, user={}", id, serverIp, username);
                         }
                     }
                 }

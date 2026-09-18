@@ -107,38 +107,41 @@ public class SYPassFabric implements ClientModInitializer {
             }
         });
 
-        // 7. Захист від витоку паролів у чат
-        ClientSendMessageEvents.ALLOW_CHAT.register(message -> {
-            if (!SYPassConfig.isChatLeakProtectionEnabled() || message == null || message.isBlank()) {
-                return true;
-            }
-            Minecraft client = Minecraft.getInstance();
-            if (client == null || client.player == null) return true;
-
-            ServerData server = client.getCurrentServer();
-            String serverAddress = (server != null) ? server.ip : "";
-
-            boolean leaks = ChatProtectionMatcher.checkMessageLeaks(
-                    message,
-                    serverAddress,
-                    SYPassConfig.getChatProtectionScope()
-            );
-
-            if (leaks) {
-                String msgKey = (SYPassConfig.getChatProtectionScope() == SYPassConfig.ChatProtectionScope.ALL_SERVERS)
-                        ? "sypass.chat.blocked_leak_all"
-                        : "sypass.chat.blocked_leak";
-                client.player.displayClientMessage(
-                        Component.translatable(msgKey).withStyle(ChatFormatting.RED),
-                        false
-                );
-                return false;
-            }
-
-            return true;
-        });
+        // 7. Захист від витоку паролів у чат та команди
+        ClientSendMessageEvents.ALLOW_CHAT.register(SYPassFabric::checkLeakAndNotify);
+        ClientSendMessageEvents.ALLOW_COMMAND.register(SYPassFabric::checkLeakAndNotify);
 
         // 8. Очищення кешу іконок при зупинці гри
         ClientLifecycleEvents.CLIENT_STOPPING.register(client -> ServerIconManager.clearCache());
+    }
+
+    private static boolean checkLeakAndNotify(String message) {
+        if (!SYPassConfig.isChatLeakProtectionEnabled() || message == null || message.isBlank()) {
+            return true;
+        }
+        Minecraft client = Minecraft.getInstance();
+        if (client == null || client.player == null) return true;
+
+        ServerData server = client.getCurrentServer();
+        String serverAddress = (server != null) ? server.ip : "";
+
+        boolean leaks = ChatProtectionMatcher.checkMessageLeaks(
+                message,
+                serverAddress,
+                SYPassConfig.getChatProtectionScope()
+        );
+
+        if (leaks) {
+            String msgKey = (SYPassConfig.getChatProtectionScope() == SYPassConfig.ChatProtectionScope.ALL_SERVERS)
+                    ? "sypass.chat.blocked_leak_all"
+                    : "sypass.chat.blocked_leak";
+            client.player.displayClientMessage(
+                    Component.translatable(msgKey).withStyle(ChatFormatting.RED),
+                    false
+            );
+            return false;
+        }
+
+        return true;
     }
 }

@@ -1184,16 +1184,7 @@ public class PasswordManager {
 
     public static String maskServerAddress(String serverAddress) {
         if (serverAddress == null || serverAddress.isEmpty()) return "";
-        StringBuilder sb = new StringBuilder(serverAddress.length());
-        for (int i = 0; i < serverAddress.length(); i++) {
-            char c = serverAddress.charAt(i);
-            if (c == '.' || c == ':') {
-                sb.append(c);
-            } else {
-                sb.append('*');
-            }
-        }
-        return sb.toString();
+        return "*".repeat(serverAddress.length());
     }
 
     public static List<String> parseCsvLine(String line) {

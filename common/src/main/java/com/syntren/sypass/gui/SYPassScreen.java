@@ -1609,13 +1609,14 @@ public class SYPassScreen extends Screen {
 
                     String bwLabel;
                     if (isDeleting) {
-                        bwLabel = "§e.";
+                        int dotIdx = (int) ((System.currentTimeMillis() / 350L) % 3);
+                        bwLabel = LOADING_DOTS[dotIdx];
                     } else if (isSuccess) {
                         bwLabel = "§a✔";
                     } else if (isPendingBw) {
                         bwLabel = "§4✔?";
                     } else {
-                        bwLabel = "§b☁✖";
+                        bwLabel = "§c☁-";
                     }
 
                     this.deleteBwBtn = Button.builder(Component.literal(bwLabel), btn -> {

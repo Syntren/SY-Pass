@@ -1182,6 +1182,20 @@ public class PasswordManager {
         return -1;
     }
 
+    public static String maskServerAddress(String serverAddress) {
+        if (serverAddress == null || serverAddress.isEmpty()) return "";
+        StringBuilder sb = new StringBuilder(serverAddress.length());
+        for (int i = 0; i < serverAddress.length(); i++) {
+            char c = serverAddress.charAt(i);
+            if (c == '.' || c == ':') {
+                sb.append(c);
+            } else {
+                sb.append('*');
+            }
+        }
+        return sb.toString();
+    }
+
     public static List<String> parseCsvLine(String line) {
         List<String> result = new ArrayList<>();
         if (line == null || line.trim().isEmpty()) return result;

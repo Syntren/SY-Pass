@@ -53,6 +53,7 @@ public class SYPassConfig {
         public boolean preventRegisterOverwrite = true;
         public boolean chatLeakProtection = false;
         public ChatProtectionScope chatProtectionScope = ChatProtectionScope.CURRENT_SERVER;
+        public boolean streamerMode = false;
         public int defaultPasswordLength = 16;
         public boolean masterPasswordEnabled = false;
         public String masterPasswordSalt = "";
@@ -189,6 +190,15 @@ public class SYPassConfig {
 
     public static void setChatProtectionScope(ChatProtectionScope scope) {
         data.chatProtectionScope = (scope != null) ? scope : ChatProtectionScope.CURRENT_SERVER;
+        save();
+    }
+
+    public static boolean isStreamerModeEnabled() {
+        return data.streamerMode;
+    }
+
+    public static void setStreamerModeEnabled(boolean enabled) {
+        data.streamerMode = enabled;
         save();
     }
 

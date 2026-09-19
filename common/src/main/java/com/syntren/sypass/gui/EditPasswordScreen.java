@@ -89,6 +89,9 @@ public class EditPasswordScreen extends Screen {
         this.serverIpEditBox.setMaxLength(256);
         this.serverIpEditBox.setValue(defaultServer);
         this.serverIpEditBox.setHint(Component.literal("mc.example.com / 127.0.0.1:25565"));
+        if (SYPassConfig.isStreamerModeEnabled()) {
+            this.serverIpEditBox.setFormatter((string, pos) -> FormattedCharSequence.forward(PasswordManager.maskServerAddress(string), Style.EMPTY));
+        }
         rootLayout.addChild(this.serverIpEditBox);
 
         // 2. Поле нікнейму
@@ -106,6 +109,10 @@ public class EditPasswordScreen extends Screen {
         int toolsWidth = 100;
         int passInputWidth = CARD_WIDTH - toolsWidth - 9;
 
+        if (SYPassConfig.isStreamerModeEnabled()) {
+            this.showPassword = false;
+        }
+
         this.passwordEditBox = new EditBox(this.font, 0, 0, passInputWidth, FIELD_HEIGHT, Component.translatable("sypass.gui.edit.password"));
         this.passwordEditBox.setMaxLength(256);
         this.passwordEditBox.setValue(initialPassword);
@@ -114,11 +121,15 @@ public class EditPasswordScreen extends Screen {
 
         // Перемикач видимості пароля
         this.toggleShowPasswordButton = Button.builder(Component.literal(showPassword ? "§a●" : "§7○"), btn -> {
+            if (SYPassConfig.isStreamerModeEnabled()) return;
             showPassword = !showPassword;
             btn.setMessage(Component.literal(showPassword ? "§a●" : "§7○"));
             btn.setTooltip(Tooltip.create(Component.translatable(showPassword ? "sypass.gui.button.hide" : "sypass.gui.button.show")));
             updatePasswordMask();
-        }).bounds(0, 0, 22, FIELD_HEIGHT).tooltip(Tooltip.create(Component.translatable("sypass.gui.button.hide"))).build();
+        }).bounds(0, 0, 22, FIELD_HEIGHT).tooltip(Tooltip.create(Component.translatable(SYPassConfig.isStreamerModeEnabled() ? "sypass.gui.settings.streamer_mode.tooltip" : (showPassword ? "sypass.gui.button.hide" : "sypass.gui.button.show")))).build();
+        if (SYPassConfig.isStreamerModeEnabled()) {
+            this.toggleShowPasswordButton.active = false;
+        }
         passwordRow.addChild(this.toggleShowPasswordButton);
 
         // Кнопка генерації пароля

@@ -226,5 +226,7 @@
   "sypass.gui.settings.master_pass.lock_now": "🔒 Lock Vault Now",
   "sypass.gui.settings.master_pass.lock_now.tooltip": "Immediately lock your vault and wipe credentials from memory",
   "sypass.toast.autolock.title": "Vault Locked",
-  "sypass.toast.autolock.desc": "Vault locked due to inactivity"
+  "sypass.toast.autolock.desc": "Vault locked due to inactivity",
+  "sypass.gui.settings.streamer_mode": "Streamer Mode: %s",
+  "sypass.gui.settings.streamer_mode.tooltip": "Hides server names, IP addresses, and custom server icons in the SY-Pass menu to prevent leaks while streaming or recording"
 }

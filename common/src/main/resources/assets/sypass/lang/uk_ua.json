@@ -226,5 +226,7 @@
   "sypass.gui.settings.master_pass.lock_now": "🔒 Заблокувати сховище",
   "sypass.gui.settings.master_pass.lock_now.tooltip": "Негайно заблокувати сховище та очистити паролі з пам'яті",
   "sypass.toast.autolock.title": "Сховище заблоковано",
-  "sypass.toast.autolock.desc": "Сховище заблоковано через бездіяльність"
+  "sypass.toast.autolock.desc": "Сховище заблоковано через бездіяльність",
+  "sypass.gui.settings.streamer_mode": "Режим стримера: %s",
+  "sypass.gui.settings.streamer_mode.tooltip": "Приховує назви серверів, IP-адреси та кастомні іконки серверів у меню SY-Pass для захисту під час трансляцій та запису"
 }

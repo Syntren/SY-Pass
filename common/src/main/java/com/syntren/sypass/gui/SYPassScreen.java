@@ -239,6 +239,11 @@ public class SYPassScreen extends Screen {
           .tooltip(Tooltip.create(Component.translatable("sypass.gui.lock.reset_confirm")))
           .build();
         addRenderableWidget(resetBtn);
+
+        Button backBtn = Button.builder(Component.translatable("sypass.gui.bw.otp.back"), b -> this.onClose())
+                .bounds(cardX, y + 104, cardWidth, 20)
+                .build();
+        addRenderableWidget(backBtn);
     }
 
     private void switchTab(Tab tab) {
@@ -969,11 +974,25 @@ public class SYPassScreen extends Screen {
                 addRenderableWidget(patternsBtn);
 
                 y += 24;
-                // Рядок 7: Відкрити папку config/sypass — ширина точно збігається з 2 колонками вище (cardWidth)
+                // Рядок 7: Режим стримера (ліворуч) та Відкрити папку (праворуч)
+                boolean streamerMode = SYPassConfig.isStreamerModeEnabled();
+                String streamerStatusStr = streamerMode ? "§a" + Component.translatable("sypass.gui.settings.on").getString() : "§7" + Component.translatable("sypass.gui.settings.off").getString();
+                Button streamerBtn = Button.builder(
+                        Component.translatable("sypass.gui.settings.streamer_mode", streamerStatusStr),
+                        b -> {
+                            boolean newVal = !SYPassConfig.isStreamerModeEnabled();
+                            SYPassConfig.setStreamerModeEnabled(newVal);
+                            clearWidgets();
+                            init();
+                        }
+                ).bounds(cardX, y, colWidth, 20)
+                 .tooltip(Tooltip.create(Component.translatable("sypass.gui.settings.streamer_mode.tooltip"))).build();
+                addRenderableWidget(streamerBtn);
+
                 Button openFolderBtn = Button.builder(Component.translatable("sypass.gui.bw.button.open_folder"), b -> {
                     File dir = PlatformHelper.get().getConfigDir().resolve("sypass").toFile();
                     Util.getPlatform().openFile(dir);
-                }).bounds(cardX, y, cardWidth, 20)
+                }).bounds(cardX + colWidth + gap, y, colWidth, 20)
                   .tooltip(Tooltip.create(Component.translatable("sypass.gui.bw.button.open_folder.tooltip"))).build();
                 addRenderableWidget(openFolderBtn);
             }
@@ -1157,6 +1176,12 @@ public class SYPassScreen extends Screen {
                             setStatusMessage("§cFailed to enable Master Password!");
                         }
                     }).bounds(cardX, y + 75, cardWidth, 20).build());
+
+                    addRenderableWidget(Button.builder(Component.translatable("sypass.gui.bw.otp.back"), b -> {
+                        this.settingsStage = SettingsStage.MAIN;
+                        clearWidgets();
+                        init();
+                    }).bounds(cardX, y + 100, cardWidth, 20).build());
                 } else {
                     this.mpNewPassBox = new EditBox(this.font, cardX, y + 20, cardWidth, 20, Component.translatable("sypass.gui.settings.master_pass.enter_pass"));
                     this.mpNewPassBox.setMaxLength(128);
@@ -1521,7 +1546,8 @@ public class SYPassScreen extends Screen {
                 this.data = data;
                 this.key = serverIp + ":::" + username;
 
-                boolean isRevealed = screen.revealedPasswords.contains(key);
+                boolean isStreamer = SYPassConfig.isStreamerModeEnabled();
+                boolean isRevealed = !isStreamer && screen.revealedPasswords.contains(key);
                 boolean canDeleteFromBw = SYPassConfig.isBitwardenEnabled() && data.isSynced() && BitwardenManager.hasActiveSession();
 
                 // 1. Кнопка Обране (★)
@@ -1545,6 +1571,7 @@ public class SYPassScreen extends Screen {
 
                 // 3. Кнопка Показати/Сховати пароль (●/○)
                 this.toggleEyeBtn = Button.builder(Component.literal(isRevealed ? "§a●" : "§7○"), btn -> {
+                    if (SYPassConfig.isStreamerModeEnabled()) return;
                     if (screen.revealedPasswords.contains(key)) {
                         screen.revealedPasswords.remove(key);
                         btn.setMessage(Component.literal("§7○"));
@@ -1555,8 +1582,11 @@ public class SYPassScreen extends Screen {
                         btn.setTooltip(Tooltip.create(Component.translatable("sypass.gui.button.hide")));
                     }
                 }).bounds(0, 0, 20, 20)
-                  .tooltip(Tooltip.create(Component.translatable(isRevealed ? "sypass.gui.button.hide" : "sypass.gui.button.show")))
+                  .tooltip(Tooltip.create(Component.translatable(isStreamer ? "sypass.gui.settings.streamer_mode.tooltip" : (isRevealed ? "sypass.gui.button.hide" : "sypass.gui.button.show"))))
                   .build();
+                if (isStreamer) {
+                    this.toggleEyeBtn.active = false;
+                }
                 children.add(toggleEyeBtn);
 
                 // 4. Кнопка Редагувати (✎)
@@ -1573,25 +1603,25 @@ public class SYPassScreen extends Screen {
 
                 // 5. Кнопка видалення лише з Bitwarden (якщо синхронізовано)
                 if (canDeleteFromBw) {
-                    boolean isPendingBw = key.equals(screen.pendingBwDeleteKey);
                     boolean isDeleting = key.equals(screen.activeBwDeletingKey);
                     boolean isSuccess = key.equals(screen.activeBwSuccessKey);
+                    boolean isPendingBw = key.equals(screen.pendingBwDeleteKey);
 
-                    String btnText;
+                    String bwLabel;
                     if (isDeleting) {
-                        int dotIdx = (int) ((System.currentTimeMillis() / 350L) % 3);
-                        btnText = LOADING_DOTS[dotIdx];
+                        bwLabel = "§e.";
                     } else if (isSuccess) {
-                        btnText = "§a✔";
+                        bwLabel = "§a✔";
                     } else if (isPendingBw) {
-                        btnText = "§4✔?";
+                        bwLabel = "§4✔?";
                     } else {
-                        btnText = "§c☁-";
+                        bwLabel = "§b☁✖";
                     }
 
-                    this.deleteBwBtn = Button.builder(Component.literal(btnText), btn -> {
-                        if (key.equals(screen.activeBwDeletingKey) || key.equals(screen.activeBwSuccessKey)) {
-                            return;
+                    this.deleteBwBtn = Button.builder(Component.literal(bwLabel), btn -> {
+                        if (isDeleting || isSuccess) return;
+                        if (key.equals(screen.pendingDeleteKey)) {
+                            screen.pendingDeleteKey = null;
                         }
                         if (key.equals(screen.pendingBwDeleteKey)) {
                             screen.pendingBwDeleteKey = null;
@@ -1607,7 +1637,8 @@ public class SYPassScreen extends Screen {
                                         if (success) {
                                             screen.activeBwSuccessKey = key;
                                             screen.bwSuccessUntilMs = System.currentTimeMillis() + 2000L;
-                                            screen.setStatusMessage(Component.translatable("sypass.gui.status.deleted_bw", username, serverIp).getString());
+                                            String dispIp = SYPassConfig.isStreamerModeEnabled() ? PasswordManager.maskServerAddress(serverIp) : serverIp;
+                                            screen.setStatusMessage(Component.translatable("sypass.gui.status.deleted_bw", username, dispIp).getString());
                                             btn.setMessage(Component.literal("§a✔"));
                                         } else {
                                             screen.setStatusMessage("§c" + Component.translatable("sypass.gui.status.deleted_bw_failed", username).getString());
@@ -1642,7 +1673,8 @@ public class SYPassScreen extends Screen {
                         if (data.isSynced() && SYPassConfig.isAutoSyncEnabled() && BitwardenManager.hasActiveSession()) {
                             BitwardenManager.deleteSingleItemAsync(serverIp, username, data.remoteId());
                         }
-                        screen.setStatusMessage(Component.translatable("sypass.gui.status.deleted", username, serverIp).getString());
+                        String dispIp = SYPassConfig.isStreamerModeEnabled() ? PasswordManager.maskServerAddress(serverIp) : serverIp;
+                        screen.setStatusMessage(Component.translatable("sypass.gui.status.deleted", username, dispIp).getString());
                         screen.refreshPasswordList();
                     } else {
                         screen.pendingDeleteKey = key;
@@ -1668,17 +1700,19 @@ public class SYPassScreen extends Screen {
                 guiGraphics.fill(left, cardY, left + width, cardY + cardH, isActiveAccount ? 0xC0182818 : 0xC01C1C1C);
                 guiGraphics.renderOutline(left, cardY, width, cardH, isActiveAccount ? 0x8855FF55 : 0xFF353535);
 
-                ResourceLocation icon = ServerIconManager.getServerIcon(serverIp);
+                boolean isStreamer = SYPassConfig.isStreamerModeEnabled();
+                ResourceLocation icon = isStreamer ? ServerIconManager.UNKNOWN_SERVER : ServerIconManager.getServerIcon(serverIp);
                 guiGraphics.blit(icon, left + 6, cardY + 9, 24, 24, 0.0F, 0.0F, 64, 64, 64, 64);
 
                 Font font = mc.font;
                 int textX = left + 36;
 
+                String displayIp = isStreamer ? PasswordManager.maskServerAddress(serverIp) : serverIp;
                 String cloudBadge = SYPassConfig.isBitwardenEnabled() ? (data.isSynced() ? "§a☁ " : "§7☁ ") : "";
-                String serverTitle = cloudBadge + (data.isFavorite() ? "§e★ " : "") + "§6§l" + serverIp;
+                String serverTitle = cloudBadge + (data.isFavorite() ? "§e★ " : "") + "§6§l" + displayIp;
                 guiGraphics.drawString(font, Component.literal(serverTitle), textX, cardY + 5, 0xFFFFFF, true);
 
-                boolean isRevealed = screen.revealedPasswords.contains(key);
+                boolean isRevealed = !isStreamer && screen.revealedPasswords.contains(key);
                 String userTitle = isActiveAccount ? "§a§l" + username : "§e" + username;
                 String passTitle;
                 if (isRevealed) {

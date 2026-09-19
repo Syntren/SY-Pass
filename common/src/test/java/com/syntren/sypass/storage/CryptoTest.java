@@ -87,4 +87,14 @@ class CryptoTest {
         assertEquals("127.0.0.1:25566", PasswordManager.normalizeServerAddress("127.0.0.1:25566"));
         assertEquals("", PasswordManager.normalizeServerAddress(null));
     }
+
+    @Test
+    @DisplayName("Mask server address replaces letters/numbers with asterisks while preserving dots and colons")
+    void testMaskServerAddress() {
+        assertEquals("**.*******.***:*****", PasswordManager.maskServerAddress("mc.hypixel.net:25565"));
+        assertEquals("***.***.*.***", PasswordManager.maskServerAddress("192.168.1.100"));
+        assertEquals("*********", PasswordManager.maskServerAddress("localhost"));
+        assertEquals("", PasswordManager.maskServerAddress(null));
+        assertEquals("", PasswordManager.maskServerAddress(""));
+    }
 }

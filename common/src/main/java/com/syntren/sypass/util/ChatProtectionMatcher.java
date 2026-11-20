@@ -1,6 +1,7 @@
 package com.syntren.sypass.util;
 
 import com.syntren.sypass.config.SYPassConfig;
+import com.syntren.sypass.storage.AccountData;
 import com.syntren.sypass.storage.PasswordManager;
 
 import java.util.*;
@@ -8,17 +9,24 @@ import java.util.*;
 /**
  * High-performance multi-pattern matcher based on the Aho-Corasick algorithm.
  * Enables O(N) linear-time password leak scanning where N is the message length,
- * completely independent of the number of passwords in the vault.
+ * independent of the number of passwords in the vault.
  */
-public class ChatProtectionMatcher {
+public final class ChatProtectionMatcher {
 
-    private static class Node {
+    private static final Set<String> STANDARD_AUTH_COMMANDS = Set.of(
+            "login", "l", "register", "reg", "auth",
+            "changepassword", "changepass", "cp", "unregister"
+    );
+
+    private ChatProtectionMatcher() {}
+
+    private static final class Node {
         final Map<Character, Node> children = new HashMap<>();
         Node fail = null;
         boolean isEndOfWord = false;
     }
 
-    private static class Automaton {
+    private static final class Automaton {
         final Node root = new Node();
         final Set<String> shortPasswords = new HashSet<>();
         int minLength = Integer.MAX_VALUE;
@@ -45,8 +53,7 @@ public class ChatProtectionMatcher {
 
             Node curr = root;
             for (int i = start; i < end; i++) {
-                char c = word[i];
-                curr = curr.children.computeIfAbsent(c, k -> new Node());
+                curr = curr.children.computeIfAbsent(word[i], k -> new Node());
             }
             curr.isEndOfWord = true;
         }
@@ -135,57 +142,42 @@ public class ChatProtectionMatcher {
                 }
             }
             return auto.containsAny(message);
-        } else {
-            if (currentServerAddress == null || currentServerAddress.isBlank()) {
-                return false;
-            }
-            String norm = PasswordManager.normalizeServerAddress(currentServerAddress);
-            Automaton auto = currentServerCache;
-            if (auto == null || !norm.equalsIgnoreCase(cachedServerIp)) {
-                synchronized (ChatProtectionMatcher.class) {
-                    if (currentServerCache == null || !norm.equalsIgnoreCase(cachedServerIp)) {
-                        Automaton newAuto = new Automaton();
-                        PasswordManager.populateProtectionAutomaton(newAuto::addWord, norm);
-                        newAuto.buildFailureLinks();
-                        currentServerCache = newAuto;
-                        cachedServerIp = norm;
-                    }
-                    auto = currentServerCache;
-                }
-            }
-            return auto.containsAny(message);
         }
+
+        if (currentServerAddress == null || currentServerAddress.isBlank()) {
+            return false;
+        }
+        String norm = ServerAddressUtil.normalize(currentServerAddress);
+        Automaton auto = currentServerCache;
+        if (auto == null || !norm.equalsIgnoreCase(cachedServerIp)) {
+            synchronized (ChatProtectionMatcher.class) {
+                if (currentServerCache == null || !norm.equalsIgnoreCase(cachedServerIp)) {
+                    Automaton newAuto = new Automaton();
+                    PasswordManager.populateProtectionAutomaton(newAuto::addWord, norm);
+                    newAuto.buildFailureLinks();
+                    currentServerCache = newAuto;
+                    cachedServerIp = norm;
+                }
+                auto = currentServerCache;
+            }
+        }
+        return auto.containsAny(message);
     }
 
     public static boolean isAuthCommand(String command, String serverAddress) {
         if (command == null || command.isBlank()) return false;
-        String clean = command.trim();
-        if (clean.startsWith("/")) {
-            clean = clean.substring(1).trim();
-        }
-        String lower = clean.toLowerCase(Locale.ROOT);
+        String cmdName = extractCommandName(command);
+        if (cmdName.isEmpty()) return false;
 
         // 1. Standard authentication and registration commands
-        if (lower.startsWith("login ") || lower.equals("login") ||
-            lower.startsWith("l ") || lower.equals("l") ||
-            lower.startsWith("register ") || lower.equals("register") ||
-            lower.startsWith("reg ") || lower.equals("reg") ||
-            lower.startsWith("auth ") || lower.equals("auth") ||
-            lower.startsWith("changepassword ") || lower.startsWith("changepass ") ||
-            lower.startsWith("cp ") || lower.startsWith("unregister ")) {
+        if (STANDARD_AUTH_COMMANDS.contains(cmdName)) {
             return true;
         }
 
         // 2. Custom registration template command
-        String regTemplate = SYPassConfig.getRegisterCommandTemplate();
-        if (regTemplate != null && !regTemplate.isBlank()) {
-            String tmplClean = regTemplate.trim();
-            if (tmplClean.startsWith("/")) tmplClean = tmplClean.substring(1).trim();
-            int spaceIdx = tmplClean.indexOf(' ');
-            String tmplPrefix = (spaceIdx > 0 ? tmplClean.substring(0, spaceIdx) : tmplClean).toLowerCase(Locale.ROOT);
-            if (!tmplPrefix.isEmpty() && (lower.startsWith(tmplPrefix + " ") || lower.equals(tmplPrefix))) {
-                return true;
-            }
+        String tmplName = extractCommandName(SYPassConfig.getRegisterCommandTemplate());
+        if (!tmplName.isEmpty() && cmdName.equals(tmplName)) {
+            return true;
         }
 
         // 3. User's configured custom login command for this server
@@ -195,23 +187,31 @@ public class ChatProtectionMatcher {
                 if (client != null && client.getUser() != null) {
                     String username = client.getUser().getName();
                     if (username != null && !username.isBlank()) {
-                        PasswordManager.AccountData acc = PasswordManager.getPassword(serverAddress, username);
-                        if (acc != null && acc.command() != null) {
-                            String customCmd = acc.command().trim();
-                            if (customCmd.startsWith("/")) customCmd = customCmd.substring(1).trim();
-                            int spaceIdx = customCmd.indexOf(' ');
-                            String customPrefix = (spaceIdx > 0 ? customCmd.substring(0, spaceIdx) : customCmd).toLowerCase(Locale.ROOT);
-                            if (!customPrefix.isEmpty() && (lower.startsWith(customPrefix + " ") || lower.equals(customPrefix))) {
+                        AccountData acc = PasswordManager.getPassword(serverAddress, username);
+                        if (acc != null) {
+                            String customName = extractCommandName(acc.command());
+                            if (!customName.isEmpty() && cmdName.equals(customName)) {
                                 return true;
                             }
                         }
                     }
                 }
             } catch (Throwable ignored) {
-                // Ignore in headless / test environment
+                // Ignore in headless / test environments
             }
         }
 
         return false;
+    }
+
+    private static String extractCommandName(String raw) {
+        if (raw == null || raw.isBlank()) return "";
+        String clean = raw.trim();
+        if (clean.startsWith("/")) {
+            clean = clean.substring(1).trim();
+        }
+        int spaceIdx = clean.indexOf(' ');
+        String name = (spaceIdx > 0) ? clean.substring(0, spaceIdx) : clean;
+        return name.toLowerCase(Locale.ROOT);
     }
 }

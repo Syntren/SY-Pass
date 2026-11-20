@@ -1,17 +1,16 @@
 package com.syntren.sypass.storage;
 
-import com.google.gson.Gson;
-import com.google.gson.JsonArray;
-import com.google.gson.JsonElement;
-import com.google.gson.JsonObject;
-import com.google.gson.JsonParser;
+import com.google.gson.*;
+import com.syntren.sypass.SYPassCommon;
 import com.syntren.sypass.config.SYPassConfig;
-import com.syntren.sypass.platform.PlatformHelper;
+import com.syntren.sypass.util.ServerAddressUtil;
 import net.minecraft.network.chat.Component;
 import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
-import java.io.*;
+import java.io.BufferedReader;
+import java.io.File;
+import java.io.InputStreamReader;
+import java.io.OutputStream;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -22,21 +21,18 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
-public class BitwardenManager {
-    private static final Logger LOGGER = LoggerFactory.getLogger("SYPass");
+/**
+ * Interfaces with a locally installed official Bitwarden CLI via stdin/environment isolation.
+ * Never downloads external binaries at runtime.
+ */
+public final class BitwardenManager {
+    private static final Logger LOGGER = SYPassCommon.LOGGER;
     private static final Gson GSON = new Gson();
-    private static String sessionKey = "";
+    private static final long STATUS_CACHE_TTL_MS = 10_000L;
 
-    public static final boolean IS_WINDOWS = System.getProperty("os.name").toLowerCase().contains("win");
-    public static final boolean IS_MAC = System.getProperty("os.name").toLowerCase().contains("mac") || System.getProperty("os.name").toLowerCase().contains("darwin");
-
-    public static Path getConfigDir() {
-        return PlatformHelper.get().getConfigDir().resolve("sypass");
-    }
-
-    public static Path getLocalCliPath() {
-        return getConfigDir().resolve(IS_WINDOWS ? "bw.exe" : "bw");
-    }
+    public static final boolean IS_WINDOWS = System.getProperty("os.name", "").toLowerCase(Locale.ROOT).contains("win");
+    public static final boolean IS_MAC = System.getProperty("os.name", "").toLowerCase(Locale.ROOT).contains("mac")
+            || System.getProperty("os.name", "").toLowerCase(Locale.ROOT).contains("darwin");
 
     private static final ExecutorService BW_EXECUTOR = Executors.newFixedThreadPool(
             Math.max(2, Runtime.getRuntime().availableProcessors() / 2),
@@ -47,23 +43,12 @@ public class BitwardenManager {
             }
     );
 
+    private static volatile String sessionKey = "";
     private static volatile String cachedExecutablePath = null;
-    private static BwStatusInfo cachedStatus = null;
-    private static long lastStatusQueryMs = 0;
-    private static final long STATUS_CACHE_TTL_MS = 10000;
+    private static volatile BwStatusInfo cachedStatus = null;
+    private static volatile long lastStatusQueryMs = 0L;
 
-    public static ExecutorService getExecutor() {
-        return BW_EXECUTOR;
-    }
-
-    public static String maskEmail(String email) {
-        if (email == null || !email.contains("@")) return "***";
-        int at = email.indexOf('@');
-        String name = email.substring(0, at);
-        String domain = email.substring(at);
-        String maskedName = (name.length() <= 2) ? "*" : name.charAt(0) + "***" + name.charAt(name.length() - 1);
-        return maskedName + domain;
-    }
+    private BitwardenManager() {}
 
     public record BwResult(int exitCode, String output) {}
 
@@ -86,15 +71,52 @@ public class BitwardenManager {
         public boolean isUnlocked() {
             return "unlocked".equalsIgnoreCase(status);
         }
+
         public boolean isLocked() {
             return "locked".equalsIgnoreCase(status);
         }
+
         public boolean isAuthenticated() {
             return !"unauthenticated".equalsIgnoreCase(status) && userEmail != null && !userEmail.isBlank();
         }
     }
 
     public record BwSyncResult(boolean success, int count, String message) {}
+
+    private record RemoteItem(String id, String serverIp, String username, String password, String command) {
+        String key() {
+            return ServerAddressUtil.normalize(serverIp) + "|" + username.toLowerCase(Locale.ROOT);
+        }
+    }
+
+    public static ExecutorService getExecutor() {
+        return BW_EXECUTOR;
+    }
+
+    public static Path getConfigDir() {
+        return SYPassConfig.getConfigDir();
+    }
+
+    /**
+     * Checks both {@code config/sypass/bw/bw(.exe)} (documented path) and {@code config/sypass/bw(.exe)} (legacy path).
+     */
+    public static Path getLocalCliPath() {
+        String bin = IS_WINDOWS ? "bw.exe" : "bw";
+        Path subDirPath = getConfigDir().resolve("bw").resolve(bin);
+        if (Files.exists(subDirPath)) {
+            return subDirPath;
+        }
+        return getConfigDir().resolve(bin);
+    }
+
+    public static String maskEmail(String email) {
+        if (email == null || !email.contains("@")) return "***";
+        int at = email.indexOf('@');
+        String name = email.substring(0, at);
+        String domain = email.substring(at);
+        String maskedName = (name.length() <= 2) ? "*" : name.charAt(0) + "***" + name.charAt(name.length() - 1);
+        return maskedName + domain;
+    }
 
     public static void setSessionKey(String key) {
         setSessionKey(key, true);
@@ -117,7 +139,7 @@ public class BitwardenManager {
     }
 
     public static void invalidateStatusCache() {
-        lastStatusQueryMs = 0;
+        lastStatusQueryMs = 0L;
         cachedStatus = null;
         cachedExecutablePath = null;
     }
@@ -129,8 +151,8 @@ public class BitwardenManager {
             File file = localPath.toFile();
             if (!file.canExecute()) {
                 try {
-                    file.setExecutable(true, false);
-                    file.setReadable(true, false);
+                    file.setExecutable(true, true);
+                    file.setReadable(true, true);
                 } catch (Exception ignored) {}
             }
             return file.canExecute() || Files.isExecutable(localPath);
@@ -138,59 +160,42 @@ public class BitwardenManager {
         return true;
     }
 
-    public static boolean deleteLocalCli() {
-        logout();
-        invalidateStatusCache();
-        try {
-            boolean deleted = Files.deleteIfExists(getLocalCliPath());
-            invalidateStatusCache();
-            return deleted;
-        } catch (Exception e) {
-            LOGGER.error("[SYPass] Failed to delete local CLI", e);
-            return false;
-        }
-    }
-
     public static String getCliExecutable() {
         if (isLocalCliInstalled()) {
             return getLocalCliPath().toAbsolutePath().toString();
         }
 
-        if (cachedExecutablePath != null && !cachedExecutablePath.equals("bw") && !cachedExecutablePath.equals("bw.cmd")) {
-            if (Files.exists(Path.of(cachedExecutablePath))) {
-                return cachedExecutablePath;
-            } else {
-                cachedExecutablePath = null;
+        String cached = cachedExecutablePath;
+        if (cached != null && !cached.equals("bw") && !cached.equals("bw.cmd")) {
+            if (Files.exists(Path.of(cached))) {
+                return cached;
             }
+            cachedExecutablePath = null;
         }
 
         String userHome = System.getProperty("user.home", "");
-        List<Path> candidatePaths = new ArrayList<>();
+        List<Path> candidates = new ArrayList<>();
 
         if (IS_WINDOWS) {
-            String appData = System.getenv("APPDATA");
-            String localAppData = System.getenv("LOCALAPPDATA");
-            String programFiles = System.getenv("ProgramFiles");
-            String programFilesX86 = System.getenv("ProgramFiles(x86)");
-            if (appData != null) candidatePaths.add(Path.of(appData, "npm", "bw.cmd"));
-            if (localAppData != null) candidatePaths.add(Path.of(localAppData, "npm", "bw.cmd"));
-            if (programFiles != null) candidatePaths.add(Path.of(programFiles, "Bitwarden CLI", "bw.exe"));
-            if (programFilesX86 != null) candidatePaths.add(Path.of(programFilesX86, "Bitwarden CLI", "bw.exe"));
-            if (!userHome.isBlank()) candidatePaths.add(Path.of(userHome, "scoop", "shims", "bw.exe"));
-            candidatePaths.add(Path.of("C:\\ProgramData\\chocolatey\\bin\\bw.exe"));
+            addIfNotNull(candidates, System.getenv("APPDATA"), "npm", "bw.cmd");
+            addIfNotNull(candidates, System.getenv("LOCALAPPDATA"), "npm", "bw.cmd");
+            addIfNotNull(candidates, System.getenv("ProgramFiles"), "Bitwarden CLI", "bw.exe");
+            addIfNotNull(candidates, System.getenv("ProgramFiles(x86)"), "Bitwarden CLI", "bw.exe");
+            if (!userHome.isBlank()) candidates.add(Path.of(userHome, "scoop", "shims", "bw.exe"));
+            candidates.add(Path.of("C:\\ProgramData\\chocolatey\\bin\\bw.exe"));
         } else {
-            candidatePaths.add(Path.of("/usr/local/bin/bw"));
-            candidatePaths.add(Path.of("/usr/bin/bw"));
-            candidatePaths.add(Path.of("/bin/bw"));
+            candidates.add(Path.of("/usr/local/bin/bw"));
+            candidates.add(Path.of("/usr/bin/bw"));
+            candidates.add(Path.of("/bin/bw"));
+            candidates.add(Path.of("/opt/homebrew/bin/bw"));
             if (!userHome.isBlank()) {
-                candidatePaths.add(Path.of(userHome, ".local/bin/bw"));
-                candidatePaths.add(Path.of(userHome, ".cargo/bin/bw"));
-                candidatePaths.add(Path.of(userHome, ".npm-global/bin/bw"));
+                candidates.add(Path.of(userHome, ".local/bin/bw"));
+                candidates.add(Path.of(userHome, ".cargo/bin/bw"));
+                candidates.add(Path.of(userHome, ".npm-global/bin/bw"));
             }
-            candidatePaths.add(Path.of("/opt/homebrew/bin/bw"));
         }
 
-        for (Path path : candidatePaths) {
+        for (Path path : candidates) {
             if (Files.exists(path) && (IS_WINDOWS || Files.isExecutable(path))) {
                 cachedExecutablePath = path.toAbsolutePath().toString();
                 return cachedExecutablePath;
@@ -199,23 +204,27 @@ public class BitwardenManager {
 
         if (!IS_WINDOWS && !userHome.isBlank()) {
             Path nvmDir = Path.of(userHome, ".nvm/versions/node");
-            if (Files.exists(nvmDir) && Files.isDirectory(nvmDir)) {
-                try {
-                    File[] nodeVersions = nvmDir.toFile().listFiles();
-                    if (nodeVersions != null) {
-                        for (File nodeVer : nodeVersions) {
-                            Path bwInNode = nodeVer.toPath().resolve("bin/bw");
-                            if (Files.exists(bwInNode) && Files.isExecutable(bwInNode)) {
-                                cachedExecutablePath = bwInNode.toAbsolutePath().toString();
-                                return cachedExecutablePath;
-                            }
+            if (Files.isDirectory(nvmDir)) {
+                File[] nodeVersions = nvmDir.toFile().listFiles();
+                if (nodeVersions != null) {
+                    for (File nodeVer : nodeVersions) {
+                        Path bwInNode = nodeVer.toPath().resolve("bin/bw");
+                        if (Files.exists(bwInNode) && Files.isExecutable(bwInNode)) {
+                            cachedExecutablePath = bwInNode.toAbsolutePath().toString();
+                            return cachedExecutablePath;
                         }
                     }
-                } catch (Exception ignored) {}
+                }
             }
         }
 
         return IS_WINDOWS ? "bw.cmd" : "bw";
+    }
+
+    private static void addIfNotNull(List<Path> list, String base, String... more) {
+        if (base != null && !base.isBlank()) {
+            list.add(Path.of(base, more));
+        }
     }
 
     public static boolean isCliInstalled() {
@@ -244,25 +253,25 @@ public class BitwardenManager {
             BwResult result = executeBwCommand("status");
             String jsonStr = (result != null) ? extractJson(result.output()) : "";
             if (result == null || result.exitCode() != 0 || jsonStr.isBlank()) {
-                cachedStatus = new BwStatusInfo(installed, local, cliPath, "unknown", "", "");
+                cachedStatus = new BwStatusInfo(true, local, cliPath, "unknown", "", "");
             } else {
                 JsonElement parsed = JsonParser.parseString(jsonStr);
                 if (parsed.isJsonObject()) {
                     JsonObject obj = parsed.getAsJsonObject();
-                    String status = obj.has("status") && !obj.get("status").isJsonNull() ? obj.get("status").getAsString() : "unknown";
-                    String userEmail = obj.has("userEmail") && !obj.get("userEmail").isJsonNull() ? obj.get("userEmail").getAsString() : "";
-                    String serverUrl = obj.has("serverUrl") && !obj.get("serverUrl").isJsonNull() ? obj.get("serverUrl").getAsString() : "";
+                    String status = optString(obj, "status", "unknown");
+                    String userEmail = optString(obj, "userEmail", "");
+                    String serverUrl = optString(obj, "serverUrl", "");
                     if ("locked".equalsIgnoreCase(status) || "unauthenticated".equalsIgnoreCase(status)) {
                         setSessionKey("", true);
                     }
                     cachedStatus = new BwStatusInfo(true, local, cliPath, status, userEmail, serverUrl);
                 } else {
-                    cachedStatus = new BwStatusInfo(installed, local, cliPath, "error", "", "");
+                    cachedStatus = new BwStatusInfo(true, local, cliPath, "error", "", "");
                 }
             }
         } catch (Exception e) {
-            LOGGER.error("[SYPass] Error querying bw status", e);
-            cachedStatus = new BwStatusInfo(installed, local, cliPath, "error", "", "");
+            LOGGER.error("[SY-Pass] Error querying bw status", e);
+            cachedStatus = new BwStatusInfo(true, local, cliPath, "error", "", "");
         }
 
         lastStatusQueryMs = now;
@@ -275,11 +284,11 @@ public class BitwardenManager {
             URI uri = URI.create(target);
             String scheme = uri.getScheme();
             if (scheme == null || (!scheme.equalsIgnoreCase("http") && !scheme.equalsIgnoreCase("https"))) {
-                LOGGER.error("[SYPass] Rejected invalid Bitwarden server protocol: {}", target);
+                LOGGER.error("[SY-Pass] Rejected invalid Bitwarden server protocol: {}", target);
                 return false;
             }
             if (target.contains("\"") || target.contains("&") || target.contains("|") || target.contains(";") || target.contains("^")) {
-                LOGGER.error("[SYPass] Rejected dangerous characters in server URL");
+                LOGGER.error("[SY-Pass] Rejected unsafe characters in server URL");
                 return false;
             }
 
@@ -287,10 +296,14 @@ public class BitwardenManager {
             invalidateStatusCache();
             return res != null && res.exitCode() == 0;
         } catch (Exception e) {
-            LOGGER.error("[SYPass] Failed to configure server URL", e);
+            LOGGER.error("[SY-Pass] Failed to configure server URL", e);
             return false;
         }
     }
+
+    // =========================================================================
+    // Authentication
+    // =========================================================================
 
     public static BwLoginResponse login(String email, String password, String otp) {
         return login(email, password, otp, null);
@@ -300,7 +313,6 @@ public class BitwardenManager {
         if (email == null || email.isBlank() || password == null || password.isBlank()) {
             return new BwLoginResponse(LoginStatus.ERROR, Component.translatable("sypass.gui.bw.error.empty_credentials").getString(), "");
         }
-
         email = email.trim();
         password = password.trim();
 
@@ -309,89 +321,70 @@ public class BitwardenManager {
         }
 
         BwStatusInfo statusInfo = getStatusInfo();
-
         try {
-            String customServer = SYPassConfig.getCustomServerUrl();
-            if (!customServer.isEmpty()) {
-                configureServer(customServer);
-            }
+            applyCustomServerIfSet();
 
             if (statusInfo.isLocked() && statusInfo.userEmail().equalsIgnoreCase(email)) {
-                LOGGER.info("[SYPass] Attempting secure unlock for {}", maskEmail(email));
-                Map<String, String> unlockEnv = Map.of("BW_PASSWORD", password);
-                BwResult unlockResult = executeBwCommandWithEnv(unlockEnv, "unlock", "--passwordenv", "BW_PASSWORD", "--raw");
+                LOGGER.info("[SY-Pass] Attempting secure unlock for {}", maskEmail(email));
+                BwResult unlockResult = executeBwCommandWithEnv(Map.of("BW_PASSWORD", password), "unlock", "--passwordenv", "BW_PASSWORD", "--raw");
                 String unlockedKey = unlockResult != null ? extractSessionKey(unlockResult.output()) : "";
                 if (unlockResult != null && unlockResult.exitCode() == 0 && !unlockedKey.isEmpty()) {
                     setSessionKey(unlockedKey);
                     return new BwLoginResponse(LoginStatus.SUCCESS, Component.translatable("sypass.gui.bw.error.unlock_success").getString(), sessionKey);
                 }
-                LOGGER.info("[SYPass] Unlock failed. Resetting session to perform fresh login...");
                 executeBwCommand("logout");
             } else if (statusInfo.isAuthenticated() && !statusInfo.userEmail().equalsIgnoreCase(email)) {
                 executeBwCommand("logout");
             }
 
             if (otp != null && !otp.isBlank() && (method == null || method.isBlank())) {
-                BwLoginResponse res = performLogin(email, password, otp, "0");
-                if (res.isSuccess()) {
-                    return res;
-                }
-                String errMsg = res.message().toLowerCase();
+                BwLoginResponse res = performLogin(email, password, otp, "0", true);
+                if (res.isSuccess()) return res;
+                String errMsg = res.message().toLowerCase(Locale.ROOT);
                 if (errMsg.contains("invalid two-step") || errMsg.contains("no provider") || errMsg.contains("method")) {
-                    BwLoginResponse resEmail = performLogin(email, password, otp, "1");
-                    if (resEmail.isSuccess()) {
-                        return resEmail;
-                    }
+                    BwLoginResponse resEmail = performLogin(email, password, otp, "1", false);
+                    if (resEmail.isSuccess()) return resEmail;
                 }
                 return res;
             }
 
-            return performLogin(email, password, otp, method);
-
+            return performLogin(email, password, otp, method, true);
         } catch (Exception e) {
-            LOGGER.error("[SYPass] Exception during login", e);
+            LOGGER.error("[SY-Pass] Exception during Bitwarden login", e);
             return new BwLoginResponse(LoginStatus.ERROR, Component.translatable("sypass.gui.bw.error.generic", e.getMessage()).getString(), "");
         }
     }
 
     public static BwLoginResponse sendEmail2faCode(String email, String password) {
-        return performLogin(email, password, null, "1");
+        return performLogin(email, password, null, "1", false);
     }
 
-    private static BwLoginResponse performLogin(String email, String password, String otp, String method) {
+    private static BwLoginResponse performLogin(String email, String password, String otp, String method, boolean allowLogoutRetry) {
         boolean hasOtp = (otp != null && !otp.isBlank());
-
-        List<String> args = new ArrayList<>();
-        args.add("login");
-        args.add(email);
-        args.add("--passwordenv");
-        args.add("BW_PASSWORD");
+        List<String> args = new ArrayList<>(List.of("login", email, "--passwordenv", "BW_PASSWORD"));
 
         if (method != null && !method.isBlank()) {
             args.add("--method");
             args.add(method.trim());
         }
-
-        if (otp != null && !otp.isBlank()) {
+        if (hasOtp) {
             args.add("--code");
             args.add(otp.trim().replaceAll("[^0-9a-zA-Z]", ""));
         }
         args.add("--raw");
 
-        LOGGER.info("[SYPass] Sending secure login command for: {} (hasOtp={}, method={})", maskEmail(email), hasOtp, method);
-        Map<String, String> env = new HashMap<>();
-        env.put("BW_PASSWORD", password);
-        BwResult result = executeBwCommandWithEnv(env, args.toArray(new String[0]));
+        LOGGER.info("[SY-Pass] Sending Bitwarden login for {} (hasOtp={}, method={})", maskEmail(email), hasOtp, method);
+        BwResult result = executeBwCommandWithEnv(Map.of("BW_PASSWORD", password), args.toArray(String[]::new));
         if (result == null) {
             return new BwLoginResponse(LoginStatus.ERROR, Component.translatable("sypass.gui.bw.error.cli_launch_failed").getString(), "");
         }
 
         String output = result.output().trim();
-        String lowerOutput = output.toLowerCase();
+        String lowerOutput = output.toLowerCase(Locale.ROOT);
 
-        if (lowerOutput.contains("already logged in")) {
+        if (allowLogoutRetry && lowerOutput.contains("already logged in")) {
             executeBwCommand("logout");
-            return performLogin(email, password, otp, method);
+            return performLogin(email, password, otp, method, false);
         }
 
         String key = extractSessionKey(output);
@@ -401,7 +394,6 @@ public class BitwardenManager {
         }
 
         if (hasOtp) {
-            LOGGER.warn("[SYPass] OTP verification failed: {}", output);
             if (lowerOutput.contains("invalid") || lowerOutput.contains("code") || lowerOutput.contains("token")
                     || lowerOutput.contains("fail") || lowerOutput.contains("incorrect")) {
                 return new BwLoginResponse(LoginStatus.INVALID_OTP, Component.translatable("sypass.gui.bw.error.invalid_otp").getString(), "");
@@ -409,10 +401,10 @@ public class BitwardenManager {
             return new BwLoginResponse(LoginStatus.ERROR, output.replace("\n", " ").trim(), "");
         }
 
-        if (lowerOutput.contains("two-step") || lowerOutput.contains("code is required") ||
-                lowerOutput.contains("verification") || lowerOutput.contains("two-factor") ||
-                lowerOutput.contains("2fa") || lowerOutput.contains("code:") ||
-                lowerOutput.contains("selectedprovider") || lowerOutput.contains("provider")) {
+        if (lowerOutput.contains("two-step") || lowerOutput.contains("code is required")
+                || lowerOutput.contains("verification") || lowerOutput.contains("two-factor")
+                || lowerOutput.contains("2fa") || lowerOutput.contains("code:")
+                || lowerOutput.contains("selectedprovider") || lowerOutput.contains("provider")) {
             String promptMsg = lowerOutput.contains("email")
                     ? Component.translatable("sypass.gui.bw.otp.prompt_email").getString()
                     : Component.translatable("sypass.gui.bw.otp.prompt_app").getString();
@@ -430,43 +422,36 @@ public class BitwardenManager {
     }
 
     public static BwLoginResponse loginWithApiKey(String clientId, String clientSecret, String masterPassword) {
-        if (clientId == null || clientId.isBlank() || clientSecret == null || clientSecret.isBlank() || masterPassword == null || masterPassword.isBlank()) {
+        if (clientId == null || clientId.isBlank() || clientSecret == null || clientSecret.isBlank()
+                || masterPassword == null || masterPassword.isBlank()) {
             return new BwLoginResponse(LoginStatus.ERROR, Component.translatable("sypass.gui.bw.error.empty_apikey").getString(), "");
         }
-
         if (!isCliInstalled()) {
             return new BwLoginResponse(LoginStatus.CLI_NOT_FOUND, Component.translatable("sypass.gui.bw.error.cli_not_found").getString(), "");
         }
 
         try {
-            String customServer = SYPassConfig.getCustomServerUrl();
-            if (!customServer.isEmpty()) {
-                configureServer(customServer);
-            }
-
+            applyCustomServerIfSet();
             executeBwCommand("logout");
 
-            Map<String, String> env = new HashMap<>();
-            env.put("BW_CLIENTID", clientId.trim());
-            env.put("BW_CLIENTSECRET", clientSecret.trim());
-
-            BwResult loginRes = executeBwCommandWithEnv(env, "login", "--apikey");
+            BwResult loginRes = executeBwCommandWithEnv(
+                    Map.of("BW_CLIENTID", clientId.trim(), "BW_CLIENTSECRET", clientSecret.trim()),
+                    "login", "--apikey"
+            );
             if (loginRes == null || loginRes.exitCode() != 0) {
                 String err = loginRes != null ? loginRes.output().trim() : "Launch failed";
                 return new BwLoginResponse(LoginStatus.ERROR, Component.translatable("sypass.gui.bw.error.apikey_failed", err).getString(), "");
             }
 
-            Map<String, String> unlockEnv = Map.of("BW_PASSWORD", masterPassword.trim());
-            BwResult unlockRes = executeBwCommandWithEnv(unlockEnv, "unlock", "--passwordenv", "BW_PASSWORD", "--raw");
+            BwResult unlockRes = executeBwCommandWithEnv(Map.of("BW_PASSWORD", masterPassword.trim()), "unlock", "--passwordenv", "BW_PASSWORD", "--raw");
             String key = unlockRes != null ? extractSessionKey(unlockRes.output()) : "";
             if (unlockRes != null && unlockRes.exitCode() == 0 && !key.isEmpty()) {
                 setSessionKey(key);
                 return new BwLoginResponse(LoginStatus.SUCCESS, Component.translatable("sypass.gui.bw.error.apikey_success").getString(), sessionKey);
-            } else {
-                return new BwLoginResponse(LoginStatus.INVALID_PASSWORD, Component.translatable("sypass.gui.bw.error.invalid_unlock_password").getString(), "");
             }
+            return new BwLoginResponse(LoginStatus.INVALID_PASSWORD, Component.translatable("sypass.gui.bw.error.invalid_unlock_password").getString(), "");
         } catch (Exception e) {
-            LOGGER.error("[SYPass] Error logging in with API key", e);
+            LOGGER.error("[SY-Pass] Error logging in with API key", e);
             return new BwLoginResponse(LoginStatus.ERROR, Component.translatable("sypass.gui.bw.error.generic", e.getMessage()).getString(), "");
         }
     }
@@ -475,62 +460,45 @@ public class BitwardenManager {
         if (sessionKeyToTest == null || sessionKeyToTest.isBlank()) {
             return new BwLoginResponse(LoginStatus.ERROR, Component.translatable("sypass.gui.bw.error.empty_session").getString(), "");
         }
-
         if (!isCliInstalled()) {
             return new BwLoginResponse(LoginStatus.CLI_NOT_FOUND, Component.translatable("sypass.gui.bw.error.cli_not_found").getString(), "");
         }
 
         try {
-            String customServer = SYPassConfig.getCustomServerUrl();
-            if (!customServer.isEmpty()) {
-                configureServer(customServer);
-            }
-
+            applyCustomServerIfSet();
             String key = sessionKeyToTest.trim();
-            Map<String, String> env = Map.of("BW_SESSION", key);
-            BwResult syncRes = executeBwCommandWithEnv(env, "sync");
+            BwResult syncRes = executeBwCommandWithEnv(Map.of("BW_SESSION", key), "sync");
             if (syncRes != null && syncRes.exitCode() == 0) {
                 setSessionKey(key);
                 return new BwLoginResponse(LoginStatus.SUCCESS, Component.translatable("sypass.gui.bw.error.session_success").getString(), sessionKey);
-            } else {
-                String err = (syncRes != null && !syncRes.output().isBlank()) ? syncRes.output().replace("\n", " ").trim() : "Invalid session key";
-                return new BwLoginResponse(LoginStatus.INVALID_PASSWORD, Component.translatable("sypass.gui.bw.error.invalid_session", err).getString(), "");
             }
+            String err = (syncRes != null && !syncRes.output().isBlank()) ? syncRes.output().replace("\n", " ").trim() : "Invalid session key";
+            return new BwLoginResponse(LoginStatus.INVALID_PASSWORD, Component.translatable("sypass.gui.bw.error.invalid_session", err).getString(), "");
         } catch (Exception e) {
-            LOGGER.error("[SYPass] Error logging in with session key", e);
+            LOGGER.error("[SY-Pass] Error logging in with session key", e);
             return new BwLoginResponse(LoginStatus.ERROR, Component.translatable("sypass.gui.bw.error.generic", e.getMessage()).getString(), "");
         }
     }
 
-    public static String extractJson(String output) {
-        if (output == null) return "";
-        int startObj = output.indexOf('{');
-        int endObj = output.lastIndexOf('}');
-        int startArr = output.indexOf('[');
-        int endArr = output.lastIndexOf(']');
+    public static void logout() {
+        try {
+            executeBwCommand("logout");
+        } catch (Exception ignored) {}
+        setSessionKey("", true);
+        PasswordManager.resetSyncFlags();
+        invalidateStatusCache();
+    }
 
-        if (startObj >= 0 && endObj > startObj && (startArr < 0 || startObj < startArr)) {
-            return output.substring(startObj, endObj + 1);
-        } else if (startArr >= 0 && endArr > startArr) {
-            return output.substring(startArr, endArr + 1);
+    private static void applyCustomServerIfSet() {
+        String customServer = SYPassConfig.getCustomServerUrl();
+        if (!customServer.isEmpty()) {
+            configureServer(customServer);
         }
-        return output.trim();
     }
 
-    public static String extractSessionKey(String output) {
-        if (output == null) return "";
-        for (String line : output.split("\n")) {
-            String trimmed = line.trim();
-            if (trimmed.length() >= 40 && !trimmed.contains(" ") && !trimmed.toLowerCase().contains("error") && trimmed.matches("^[A-Za-z0-9+/=]+$")) {
-                return trimmed;
-            }
-        }
-        return "";
-    }
-
-    public static boolean isValidSessionKey(String output) {
-        return !extractSessionKey(output).isEmpty();
-    }
+    // =========================================================================
+    // Vault Sync (Pull / Push / Single Item)
+    // =========================================================================
 
     public static BwSyncResult pullFromBitwarden() {
         if (!hasActiveSession()) {
@@ -539,89 +507,49 @@ public class BitwardenManager {
 
         try {
             executeBwCommand("sync");
-
-            BwResult result = executeBwCommand("list", "items");
-            if (result == null || result.exitCode() != 0 || result.output().isBlank()) {
-                String rawErr = result != null ? result.output().trim() : "";
-                if (rawErr.toLowerCase().contains("vault is locked") || rawErr.toLowerCase().contains("not logged in")) {
-                    setSessionKey("", true);
-                    invalidateStatusCache();
-                    return new BwSyncResult(false, 0, Component.translatable("sypass.gui.bw.sync.vault_locked").getString());
-                }
-                String err = !rawErr.isBlank() ? rawErr : "No response from CLI";
-                return new BwSyncResult(false, 0, Component.translatable("sypass.gui.bw.sync.fetch_failed", err).getString());
+            List<RemoteItem> remoteItems = listVaultItems(true);
+            if (remoteItems == null) {
+                return new BwSyncResult(false, 0, Component.translatable("sypass.gui.bw.sync.vault_locked").getString());
             }
 
-            String jsonStr = extractJson(result.output());
-            JsonElement element = JsonParser.parseString(jsonStr);
-            if (!element.isJsonArray()) {
-                return new BwSyncResult(false, 0, Component.translatable("sypass.gui.bw.sync.invalid_format").getString());
-            }
-
-            JsonArray items = element.getAsJsonArray();
-            int importedCount = 0;
             Set<String> remoteKeys = new HashSet<>();
+            List<CsvCodec.ImportedEntry> toImport = new ArrayList<>();
 
-            for (int i = 0; i < items.size(); i++) {
-                JsonObject item = items.get(i).getAsJsonObject();
-                String id = item.has("id") && !item.get("id").isJsonNull() ? item.get("id").getAsString() : "";
-                String name = item.has("name") && !item.get("name").isJsonNull() ? item.get("name").getAsString() : "";
-
-                if (item.has("login") && !item.get("login").isJsonNull()) {
-                    JsonObject login = item.getAsJsonObject("login");
-                    String username = login.has("username") && !login.get("username").isJsonNull() ? login.get("username").getAsString() : "";
-                    String password = login.has("password") && !login.get("password").isJsonNull() ? login.get("password").getAsString() : "";
-                    String command = item.has("notes") && !item.get("notes").isJsonNull() ? item.get("notes").getAsString() : "/login";
-
-                    String serverIp = "";
-
-                    if (login.has("uris") && login.get("uris").isJsonArray()) {
-                        JsonArray uris = login.getAsJsonArray("uris");
-                        for (int u = 0; u < uris.size(); u++) {
-                            JsonObject uObj = uris.get(u).getAsJsonObject();
-                            if (uObj.has("uri") && !uObj.get("uri").isJsonNull()) {
-                                String uriVal = uObj.get("uri").getAsString().trim();
-                                if (uriVal.startsWith("mc://")) {
-                                    serverIp = uriVal.replace("mc://", "");
-                                    break;
-                                }
-                            }
-                        }
-                    }
-
-                    if (serverIp.isEmpty() && (name.startsWith("Minecraft: ") || name.startsWith("MC: "))) {
-                        serverIp = name.replace("Minecraft: ", "").replace("MC: ", "").trim();
-                    }
-
-                    if (!serverIp.isEmpty() && !username.isEmpty() && !password.isEmpty()) {
-                        String key = serverIp.toLowerCase() + "|" + username.toLowerCase();
-                        if (!remoteKeys.contains(key)) {
-                            importedCount++;
-                            PasswordManager.savePassword(serverIp, username, password, command, true, id);
-                            remoteKeys.add(key);
-                        } else {
-                            LOGGER.warn("[SYPass] Skipping duplicate item found in Bitwarden vault: id={}, server={}, user={}", id, serverIp, username);
-                        }
-                    }
+            for (RemoteItem item : remoteItems) {
+                if (item.password().isEmpty()) continue;
+                String key = item.key();
+                if (remoteKeys.add(key)) {
+                    AccountData existing = PasswordManager.getPassword(item.serverIp(), item.username());
+                    boolean favorite = existing != null && existing.isFavorite();
+                    long lastUsed = existing != null ? existing.lastUsed() : 0L;
+                    toImport.add(new CsvCodec.ImportedEntry(
+                            item.serverIp(), item.username(), item.password().toCharArray(),
+                            item.command(), true, item.id(), favorite, lastUsed
+                    ));
+                } else {
+                    LOGGER.warn("[SY-Pass] Skipping duplicate Bitwarden item: id={}, server={}, user={}", item.id(), item.serverIp(), item.username());
                 }
             }
 
-            Map<String, Map<String, PasswordManager.AccountData>> allData = PasswordManager.getRawMemoryData();
-            for (Map.Entry<String, Map<String, PasswordManager.AccountData>> sEntry : allData.entrySet()) {
+            int importedCount = PasswordManager.savePasswordBatch(toImport);
+
+            // Unmark local items that are no longer in Bitwarden
+            Map<String, Map<String, AccountData>> allData = PasswordManager.getRawMemoryData();
+            for (Map.Entry<String, Map<String, AccountData>> sEntry : allData.entrySet()) {
                 String sIp = sEntry.getKey();
-                for (Map.Entry<String, PasswordManager.AccountData> aEntry : sEntry.getValue().entrySet()) {
+                for (Map.Entry<String, AccountData> aEntry : sEntry.getValue().entrySet()) {
                     String uName = aEntry.getKey();
-                    PasswordManager.AccountData acc = aEntry.getValue();
-                    String key = sIp.toLowerCase() + "|" + uName.toLowerCase();
+                    AccountData acc = aEntry.getValue();
+                    String key = ServerAddressUtil.normalize(sIp) + "|" + uName.toLowerCase(Locale.ROOT);
                     if (acc.isSynced() && !remoteKeys.contains(key)) {
-                        PasswordManager.savePassword(sIp, uName, acc.password(), acc.command(), false, "");
+                        PasswordManager.unmarkSynced(sIp, uName);
                     }
                 }
             }
 
             return new BwSyncResult(true, importedCount, Component.translatable("sypass.gui.bw.sync.pull_success", importedCount).getString());
         } catch (Exception e) {
-            LOGGER.error("[SYPass] Error pulling from Bitwarden", e);
+            LOGGER.error("[SY-Pass] Error pulling from Bitwarden", e);
             return new BwSyncResult(false, 0, Component.translatable("sypass.gui.bw.sync.pull_failed", e.getMessage()).getString());
         }
     }
@@ -633,68 +561,30 @@ public class BitwardenManager {
 
         try {
             executeBwCommand("sync");
+            List<RemoteItem> remoteItems = listVaultItems(true);
+            if (remoteItems == null) {
+                return new BwSyncResult(false, 0, Component.translatable("sypass.gui.bw.sync.vault_locked").getString());
+            }
 
             Map<String, String> existingItemIds = new HashMap<>();
-            BwResult listResult = executeBwCommand("list", "items");
-            if (listResult != null && listResult.exitCode() != 0) {
-                String rawErr = listResult.output().trim();
-                if (rawErr.toLowerCase().contains("vault is locked") || rawErr.toLowerCase().contains("not logged in")) {
-                    setSessionKey("", true);
-                    invalidateStatusCache();
-                    return new BwSyncResult(false, 0, Component.translatable("sypass.gui.bw.sync.vault_locked").getString());
+            for (RemoteItem item : remoteItems) {
+                if (!item.id().isEmpty()) {
+                    existingItemIds.putIfAbsent(item.key(), item.id());
                 }
             }
-            if (listResult != null && listResult.exitCode() == 0 && !listResult.output().isBlank()) {
-                try {
-                    String jsonStr = extractJson(listResult.output());
-                    JsonElement parsed = JsonParser.parseString(jsonStr);
-                    if (parsed.isJsonArray()) {
-                        for (JsonElement elem : parsed.getAsJsonArray()) {
-                            JsonObject itemObj = elem.getAsJsonObject();
-                            String id = itemObj.has("id") ? itemObj.get("id").getAsString() : "";
-                            String name = itemObj.has("name") ? itemObj.get("name").getAsString() : "";
-                            String user = "";
-                            String sIp = "";
 
-                            if (itemObj.has("login") && !itemObj.get("login").isJsonNull()) {
-                                JsonObject loginObj = itemObj.getAsJsonObject("login");
-                                user = loginObj.has("username") ? loginObj.get("username").getAsString() : "";
-                                if (loginObj.has("uris") && loginObj.get("uris").isJsonArray()) {
-                                    for (JsonElement uElem : loginObj.getAsJsonArray("uris")) {
-                                        String u = uElem.getAsJsonObject().get("uri").getAsString();
-                                        if (u.startsWith("mc://")) {
-                                            sIp = u.replace("mc://", "");
-                                            break;
-                                        }
-                                    }
-                                }
-                            }
-                            if (sIp.isEmpty() && name.startsWith("Minecraft: ")) {
-                                sIp = name.replace("Minecraft: ", "");
-                            }
-
-                            if (!id.isEmpty() && !sIp.isEmpty() && !user.isEmpty()) {
-                                existingItemIds.put(sIp.toLowerCase() + "|" + user.toLowerCase(), id);
-                            }
-                        }
-                    }
-                } catch (Exception ignored) {}
-            }
-
-            Map<String, Map<String, PasswordManager.AccountData>> allData = PasswordManager.getRawMemoryData();
+            Map<String, Map<String, AccountData>> allData = PasswordManager.getRawMemoryData();
             int created = 0;
             int updated = 0;
 
-            for (Map.Entry<String, Map<String, PasswordManager.AccountData>> serverEntry : allData.entrySet()) {
+            for (Map.Entry<String, Map<String, AccountData>> serverEntry : allData.entrySet()) {
                 String serverIp = serverEntry.getKey();
-                for (Map.Entry<String, PasswordManager.AccountData> accEntry : serverEntry.getValue().entrySet()) {
+                for (Map.Entry<String, AccountData> accEntry : serverEntry.getValue().entrySet()) {
                     String username = accEntry.getKey();
-                    PasswordManager.AccountData data = accEntry.getValue();
+                    AccountData data = accEntry.getValue();
 
-                    String key = serverIp.toLowerCase() + "|" + username.toLowerCase();
-                    String existingId = (data.remoteId() != null && !data.remoteId().isBlank())
-                            ? data.remoteId()
-                            : existingItemIds.get(key);
+                    String key = ServerAddressUtil.normalize(serverIp) + "|" + username.toLowerCase(Locale.ROOT);
+                    String existingId = !data.remoteId().isBlank() ? data.remoteId() : existingItemIds.get(key);
 
                     String assignedId = createOrUpdateBitwardenItem(existingId, serverIp, username, data.getPasswordAsString(), data.command());
                     if (assignedId != null) {
@@ -708,53 +598,81 @@ public class BitwardenManager {
             executeBwCommand("sync");
             return new BwSyncResult(true, created + updated, Component.translatable("sypass.gui.bw.sync.push_summary", created, updated).getString());
         } catch (Exception e) {
-            LOGGER.error("[SYPass] Error pushing to Bitwarden", e);
+            LOGGER.error("[SY-Pass] Error pushing to Bitwarden", e);
             return new BwSyncResult(false, 0, Component.translatable("sypass.gui.bw.sync.push_failed", e.getMessage()).getString());
         }
     }
 
     public static String findBitwardenItemId(String serverIp, String username) {
+        executeBwCommand("sync");
+        List<RemoteItem> items = listVaultItems(false);
+        if (items == null) return "";
+        String targetKey = ServerAddressUtil.normalize(serverIp) + "|" + username.toLowerCase(Locale.ROOT);
+        for (RemoteItem item : items) {
+            if (!item.id().isEmpty() && item.key().equals(targetKey)) {
+                return item.id();
+            }
+        }
+        return "";
+    }
+
+    /**
+     * Unified parser for {@code bw list items}, replacing 3 duplicated loops.
+     * Returns {@code null} when the vault is locked/unauthenticated.
+     */
+    private static List<RemoteItem> listVaultItems(boolean clearSessionIfLocked) {
+        BwResult result = executeBwCommand("list", "items");
+        if (result == null || result.exitCode() != 0 || result.output().isBlank()) {
+            String rawErr = (result != null) ? result.output().trim().toLowerCase(Locale.ROOT) : "";
+            if (clearSessionIfLocked && (rawErr.contains("vault is locked") || rawErr.contains("not logged in"))) {
+                setSessionKey("", true);
+                invalidateStatusCache();
+            }
+            return null;
+        }
+
+        List<RemoteItem> parsedItems = new ArrayList<>();
         try {
-            executeBwCommand("sync");
-            BwResult listResult = executeBwCommand("list", "items");
-            if (listResult != null && listResult.exitCode() == 0 && !listResult.output().isBlank()) {
-                String jsonStr = extractJson(listResult.output());
-                JsonElement parsed = JsonParser.parseString(jsonStr);
-                if (parsed.isJsonArray()) {
-                    for (JsonElement elem : parsed.getAsJsonArray()) {
-                        JsonObject itemObj = elem.getAsJsonObject();
-                        String id = itemObj.has("id") && !itemObj.get("id").isJsonNull() ? itemObj.get("id").getAsString() : "";
-                        String name = itemObj.has("name") && !itemObj.get("name").isJsonNull() ? itemObj.get("name").getAsString() : "";
-                        String user = "";
-                        String sIp = "";
+            JsonElement root = JsonParser.parseString(extractJson(result.output()));
+            if (!root.isJsonArray()) return parsedItems;
 
-                        if (itemObj.has("login") && !itemObj.get("login").isJsonNull()) {
-                            JsonObject loginObj = itemObj.getAsJsonObject("login");
-                            user = loginObj.has("username") ? loginObj.get("username").getAsString() : "";
-                            if (loginObj.has("uris") && loginObj.get("uris").isJsonArray()) {
-                                for (JsonElement uElem : loginObj.getAsJsonArray("uris")) {
-                                    JsonObject uObj = uElem.getAsJsonObject();
-                                    if (uObj.has("uri") && !uObj.get("uri").isJsonNull()) {
-                                        String u = uObj.get("uri").getAsString();
-                                        if (u.startsWith("mc://")) {
-                                            sIp = u.replace("mc://", "");
-                                            break;
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        if (sIp.isEmpty() && name.startsWith("Minecraft: ")) {
-                            sIp = name.replace("Minecraft: ", "");
-                        }
+            for (JsonElement elem : root.getAsJsonArray()) {
+                if (!elem.isJsonObject()) continue;
+                JsonObject obj = elem.getAsJsonObject();
+                if (!obj.has("login") || obj.get("login").isJsonNull()) continue;
 
-                        if (!id.isEmpty() && sIp.equalsIgnoreCase(serverIp) && user.equalsIgnoreCase(username)) {
-                            return id;
-                        }
-                    }
+                String id = optString(obj, "id", "");
+                String name = optString(obj, "name", "");
+                String command = optString(obj, "notes", "/login");
+
+                JsonObject login = obj.getAsJsonObject("login");
+                String username = optString(login, "username", "");
+                String password = optString(login, "password", "");
+
+                String serverIp = extractMinecraftUri(login);
+                if (serverIp.isEmpty() && (name.startsWith("Minecraft: ") || name.startsWith("MC: "))) {
+                    serverIp = name.replace("Minecraft: ", "").replace("MC: ", "").trim();
+                }
+
+                if (!serverIp.isEmpty() && !username.isEmpty()) {
+                    parsedItems.add(new RemoteItem(id, serverIp, username, password, command));
                 }
             }
-        } catch (Exception ignored) {}
+        } catch (Exception e) {
+            LOGGER.warn("[SY-Pass] Failed to parse Bitwarden items list: {}", e.getMessage());
+        }
+        return parsedItems;
+    }
+
+    private static String extractMinecraftUri(JsonObject login) {
+        if (!login.has("uris") || !login.get("uris").isJsonArray()) return "";
+        for (JsonElement uElem : login.getAsJsonArray("uris")) {
+            if (!uElem.isJsonObject()) continue;
+            String uriVal = optString(uElem.getAsJsonObject(), "uri", "").trim();
+            if (uriVal.startsWith("mc://")) {
+                return uriVal.substring(5);
+            }
+        }
         return "";
     }
 
@@ -762,9 +680,9 @@ public class BitwardenManager {
         return CompletableFuture.supplyAsync(() -> {
             if (!hasActiveSession()) return false;
             try {
-                PasswordManager.AccountData acc = PasswordManager.getPassword(serverIp, username);
-                String remoteId = acc != null ? acc.remoteId() : "";
-                if (remoteId == null || remoteId.isBlank()) {
+                AccountData acc = PasswordManager.getPassword(serverIp, username);
+                String remoteId = (acc != null) ? acc.remoteId() : "";
+                if (remoteId.isBlank()) {
                     remoteId = findBitwardenItemId(serverIp, username);
                 }
                 String assignedId = createOrUpdateBitwardenItem(remoteId, serverIp, username, password, command);
@@ -774,48 +692,28 @@ public class BitwardenManager {
                 }
                 return false;
             } catch (Exception e) {
-                LOGGER.error("[SYPass] Failed background single push", e);
+                LOGGER.error("[SY-Pass] Failed background single push", e);
                 return false;
             }
         }, BW_EXECUTOR);
     }
 
-    public static CompletableFuture<Boolean> deleteSingleItemAsync(String serverIp, String username) {
-        return deleteSingleItemAsync(serverIp, username, null);
-    }
-
     public static CompletableFuture<Boolean> deleteSingleItemAsync(String serverIp, String username, String knownRemoteId) {
-        return CompletableFuture.supplyAsync(() -> {
-            if (!hasActiveSession()) return false;
-            try {
-                String remoteId = (knownRemoteId != null && !knownRemoteId.isBlank()) ? knownRemoteId.trim() : "";
-                if (remoteId.isEmpty()) {
-                    PasswordManager.AccountData acc = PasswordManager.getPassword(serverIp, username);
-                    remoteId = acc != null ? acc.remoteId() : "";
-                }
-                if (remoteId.isEmpty()) {
-                    remoteId = findBitwardenItemId(serverIp, username);
-                }
-                if (!remoteId.isEmpty()) {
-                    BwResult res = executeBwCommand("delete", "item", remoteId, "--permanent");
-                    executeBwCommand("sync");
-                    return res != null && res.exitCode() == 0;
-                }
-            } catch (Exception e) {
-                LOGGER.error("[SYPass] Failed background single delete", e);
-            }
-            return false;
-        }, BW_EXECUTOR);
+        return deleteInternalAsync(serverIp, username, knownRemoteId, false);
     }
 
     public static CompletableFuture<Boolean> deleteFromBitwardenOnlyAsync(String serverIp, String username, String knownRemoteId) {
+        return deleteInternalAsync(serverIp, username, knownRemoteId, true);
+    }
+
+    private static CompletableFuture<Boolean> deleteInternalAsync(String serverIp, String username, String knownRemoteId, boolean unmarkLocalOnSuccess) {
         return CompletableFuture.supplyAsync(() -> {
             if (!hasActiveSession()) return false;
             try {
                 String remoteId = (knownRemoteId != null && !knownRemoteId.isBlank()) ? knownRemoteId.trim() : "";
-                PasswordManager.AccountData acc = PasswordManager.getPassword(serverIp, username);
-                if (remoteId.isEmpty() && acc != null) {
-                    remoteId = acc.remoteId();
+                if (remoteId.isEmpty()) {
+                    AccountData acc = PasswordManager.getPassword(serverIp, username);
+                    remoteId = (acc != null) ? acc.remoteId() : "";
                 }
                 if (remoteId.isEmpty()) {
                     remoteId = findBitwardenItemId(serverIp, username);
@@ -823,19 +721,21 @@ public class BitwardenManager {
                 if (!remoteId.isEmpty()) {
                     BwResult res = executeBwCommand("delete", "item", remoteId, "--permanent");
                     executeBwCommand("sync");
-                    if (res != null && res.exitCode() == 0) {
+                    boolean ok = res != null && res.exitCode() == 0;
+                    if (ok && unmarkLocalOnSuccess) {
                         PasswordManager.unmarkSynced(serverIp, username);
-                        return true;
                     }
+                    return ok;
                 }
             } catch (Exception e) {
-                LOGGER.error("[SYPass] Failed background single delete from Bitwarden", e);
+                LOGGER.error("[SY-Pass] Failed background Bitwarden delete", e);
             }
             return false;
         }, BW_EXECUTOR);
     }
 
     private static String createOrUpdateBitwardenItem(String existingId, String serverIp, String username, String password, String command) {
+        byte[] stdinData = null;
         try {
             JsonObject item = new JsonObject();
             if (existingId != null && !existingId.isBlank()) {
@@ -857,30 +757,24 @@ public class BitwardenManager {
 
             item.add("login", login);
 
-            String encodedJson = Base64.getEncoder().encodeToString(GSON.toJson(item).getBytes(StandardCharsets.UTF_8));
-            byte[] stdinData = encodedJson.getBytes(StandardCharsets.UTF_8);
-            BwResult res;
-            if (existingId != null && !existingId.isBlank()) {
-                res = executeBwCommandWithStdin(stdinData, "edit", "item", existingId);
-            } else {
-                res = executeBwCommandWithStdin(stdinData, "create", "item");
-            }
+            stdinData = Base64.getEncoder().encode(GSON.toJson(item).getBytes(StandardCharsets.UTF_8));
+            BwResult res = (existingId != null && !existingId.isBlank())
+                    ? executeBwCommandWithStdin(stdinData, "edit", "item", existingId)
+                    : executeBwCommandWithStdin(stdinData, "create", "item");
 
             if (res != null && res.exitCode() == 0) {
                 String finalId = (existingId != null && !existingId.isBlank()) ? existingId : "";
                 try {
-                    String jsonStr = extractJson(res.output());
-                    JsonObject resObj = JsonParser.parseString(jsonStr).getAsJsonObject();
-                    if (resObj.has("id") && !resObj.get("id").isJsonNull()) {
-                        finalId = resObj.get("id").getAsString();
-                    }
+                    JsonObject resObj = JsonParser.parseString(extractJson(res.output())).getAsJsonObject();
+                    String parsedId = optString(resObj, "id", "");
+                    if (!parsedId.isEmpty()) finalId = parsedId;
                 } catch (Exception ignored) {}
                 if (!finalId.isEmpty()) {
                     PasswordManager.savePassword(serverIp, username, password, command, true, finalId);
                 }
                 return finalId;
             } else if (res != null) {
-                String out = res.output().toLowerCase();
+                String out = res.output().toLowerCase(Locale.ROOT);
                 if (out.contains("vault is locked") || out.contains("not logged in")) {
                     setSessionKey("", true);
                     invalidateStatusCache();
@@ -888,18 +782,50 @@ public class BitwardenManager {
             }
             return null;
         } catch (Exception e) {
-            LOGGER.error("[SYPass] Error creating/updating item in Bitwarden", e);
+            LOGGER.error("[SY-Pass] Error creating/updating item in Bitwarden", e);
             return null;
+        } finally {
+            if (stdinData != null) {
+                Arrays.fill(stdinData, (byte) 0);
+            }
         }
     }
 
-    public static void logout() {
-        try {
-            executeBwCommand("logout");
-        } catch (Exception ignored) {}
-        setSessionKey("", true);
-        PasswordManager.resetSyncFlags();
-        invalidateStatusCache();
+    // =========================================================================
+    // Process Execution & Parsing Helpers
+    // =========================================================================
+
+    public static String extractJson(String output) {
+        if (output == null) return "";
+        int startObj = output.indexOf('{');
+        int endObj = output.lastIndexOf('}');
+        int startArr = output.indexOf('[');
+        int endArr = output.lastIndexOf(']');
+
+        if (startObj >= 0 && endObj > startObj && (startArr < 0 || startObj < startArr)) {
+            return output.substring(startObj, endObj + 1);
+        }
+        if (startArr >= 0 && endArr > startArr) {
+            return output.substring(startArr, endArr + 1);
+        }
+        return output.trim();
+    }
+
+    public static String extractSessionKey(String output) {
+        if (output == null) return "";
+        for (String line : output.split("\n")) {
+            String trimmed = line.trim();
+            if (trimmed.length() >= 40 && !trimmed.contains(" ")
+                    && !trimmed.toLowerCase(Locale.ROOT).contains("error")
+                    && trimmed.matches("^[A-Za-z0-9+/=]+$")) {
+                return trimmed;
+            }
+        }
+        return "";
+    }
+
+    private static String optString(JsonObject obj, String key, String fallback) {
+        return (obj.has(key) && !obj.get(key).isJsonNull()) ? obj.get(key).getAsString() : fallback;
     }
 
     private static BwResult executeBwCommand(String... args) {
@@ -916,16 +842,13 @@ public class BitwardenManager {
 
     private static BwResult executeBwCommandWithEnvAndStdin(byte[] stdinData, Map<String, String> extraEnv, String... args) {
         try {
-            String executable = isLocalCliInstalled()
-                    ? getLocalCliPath().toAbsolutePath().toString()
-                    : getCliExecutable();
-
+            String executable = getCliExecutable();
             if (!IS_WINDOWS && Files.exists(Path.of(executable))) {
                 File f = new File(executable);
                 if (!f.canExecute()) {
                     try {
-                        f.setExecutable(true, false);
-                        f.setReadable(true, false);
+                        f.setExecutable(true, true);
+                        f.setReadable(true, true);
                     } catch (Exception ignored) {}
                 }
             }
@@ -941,8 +864,9 @@ public class BitwardenManager {
                 pb.directory(configDir.toFile());
             }
 
-            if (sessionKey != null && !sessionKey.isEmpty()) {
-                pb.environment().put("BW_SESSION", sessionKey);
+            String currentSession = sessionKey;
+            if (currentSession != null && !currentSession.isEmpty()) {
+                pb.environment().put("BW_SESSION", currentSession);
             }
             pb.environment().put("BW_NOINTERACTION", "true");
             pb.environment().remove("LD_PRELOAD");
@@ -951,15 +875,15 @@ public class BitwardenManager {
                 pb.environment().putAll(extraEnv);
             }
 
-            String currentPath = pb.environment().getOrDefault("PATH", "");
             if (!IS_WINDOWS) {
+                String currentPath = pb.environment().getOrDefault("PATH", "");
                 String home = System.getProperty("user.home", "");
-                String extraPaths = "/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin:" + home + "/.local/bin:" + home + "/.cargo/bin:" + home + "/.npm-global/bin";
+                String extraPaths = "/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin:"
+                        + home + "/.local/bin:" + home + "/.cargo/bin:" + home + "/.npm-global/bin";
                 pb.environment().put("PATH", currentPath.isEmpty() ? extraPaths : currentPath + ":" + extraPaths);
             }
 
             Process process = pb.start();
-
             if (stdinData != null && stdinData.length > 0) {
                 try (OutputStream os = process.getOutputStream()) {
                     os.write(stdinData);
@@ -976,7 +900,7 @@ public class BitwardenManager {
                 try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
                     String line;
                     while ((line = reader.readLine()) != null) {
-                        output.append(line).append("\n");
+                        output.append(line).append('\n');
                     }
                 } catch (Exception ignored) {}
             }, "SYPass-Process-Reader");
@@ -992,18 +916,17 @@ public class BitwardenManager {
             } catch (Exception ignored) {}
 
             int exitCode = finished ? process.exitValue() : -1;
-            String rawOutput = output.toString().trim();
             StringBuilder cleanOutput = new StringBuilder();
-            for (String line : rawOutput.split("\n")) {
+            for (String line : output.toString().trim().split("\n")) {
                 String trimmed = line.trim();
                 if (trimmed.startsWith("gamemode") || trimmed.startsWith("ERROR: ld.so") || trimmed.startsWith("WARNING: ld.so")) {
                     continue;
                 }
-                cleanOutput.append(line).append("\n");
+                cleanOutput.append(line).append('\n');
             }
             return new BwResult(exitCode, cleanOutput.toString().trim());
         } catch (Exception e) {
-            LOGGER.error("[SYPass] Failed to execute BW CLI command", e);
+            LOGGER.error("[SY-Pass] Failed to execute BW CLI command", e);
             return new BwResult(-1, "Exception: " + e.getMessage());
         }
     }

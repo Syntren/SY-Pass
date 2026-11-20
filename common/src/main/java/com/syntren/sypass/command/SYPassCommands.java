@@ -9,6 +9,7 @@ import com.syntren.sypass.config.SYPassConfig;
 import com.syntren.sypass.gui.SYPassToast;
 import com.syntren.sypass.handler.AutoLoginHandler;
 import com.syntren.sypass.platform.PlatformHelper;
+import com.syntren.sypass.storage.AccountData;
 import com.syntren.sypass.storage.BitwardenManager;
 import com.syntren.sypass.storage.PasswordManager;
 import com.syntren.sypass.util.PasswordGenerator;
@@ -18,7 +19,9 @@ import net.minecraft.network.chat.Component;
 import java.util.function.BiConsumer;
 import java.util.function.Function;
 
-public class SYPassCommands {
+public final class SYPassCommands {
+
+    private SYPassCommands() {}
 
     public static <S> LiteralArgumentBuilder<S> buildCommandTree(
             Function<S, Minecraft> clientExtractor,
@@ -50,17 +53,20 @@ public class SYPassCommands {
                                 .executes(ctx -> handleGeneratePassword(ctx, feedbackConsumer, IntegerArgumentType.getInteger(ctx, "length")))
                         )
                 )
-                .then(LiteralArgumentBuilder.<S>literal("register")
-                        .executes(ctx -> handleQuickRegister(ctx, clientExtractor, feedbackConsumer, errorConsumer, SYPassConfig.getDefaultPasswordLength()))
-                        .then(RequiredArgumentBuilder.<S, Integer>argument("length", IntegerArgumentType.integer(6, 64))
-                                .executes(ctx -> handleQuickRegister(ctx, clientExtractor, feedbackConsumer, errorConsumer, IntegerArgumentType.getInteger(ctx, "length")))
-                        )
-                )
-                .then(LiteralArgumentBuilder.<S>literal("quickreg")
-                        .executes(ctx -> handleQuickRegister(ctx, clientExtractor, feedbackConsumer, errorConsumer, SYPassConfig.getDefaultPasswordLength()))
-                        .then(RequiredArgumentBuilder.<S, Integer>argument("length", IntegerArgumentType.integer(6, 64))
-                                .executes(ctx -> handleQuickRegister(ctx, clientExtractor, feedbackConsumer, errorConsumer, IntegerArgumentType.getInteger(ctx, "length")))
-                        )
+                .then(buildRegisterSubcommand("register", clientExtractor, feedbackConsumer, errorConsumer))
+                .then(buildRegisterSubcommand("quickreg", clientExtractor, feedbackConsumer, errorConsumer));
+    }
+
+    private static <S> LiteralArgumentBuilder<S> buildRegisterSubcommand(
+            String literal,
+            Function<S, Minecraft> clientExtractor,
+            BiConsumer<S, Component> feedbackConsumer,
+            BiConsumer<S, Component> errorConsumer
+    ) {
+        return LiteralArgumentBuilder.<S>literal(literal)
+                .executes(ctx -> handleQuickRegister(ctx, clientExtractor, feedbackConsumer, errorConsumer, SYPassConfig.getDefaultPasswordLength()))
+                .then(RequiredArgumentBuilder.<S, Integer>argument("length", IntegerArgumentType.integer(6, 64))
+                        .executes(ctx -> handleQuickRegister(ctx, clientExtractor, feedbackConsumer, errorConsumer, IntegerArgumentType.getInteger(ctx, "length")))
                 );
     }
 
@@ -90,8 +96,7 @@ public class SYPassCommands {
 
         String username = client.getUser().getName();
         String serverIp = client.getCurrentServer().ip;
-        boolean success = AutoLoginHandler.executeQuickRegister(client, length);
-        if (success) {
+        if (AutoLoginHandler.executeQuickRegister(client, length)) {
             feedback.accept(context.getSource(), Component.translatable("sypass.command.registered", username, serverIp));
             return 1;
         }
@@ -114,7 +119,7 @@ public class SYPassCommands {
 
         String username = client.getUser().getName();
         String cleanPassword = password.trim().replaceAll("^\"|\"$", "");
-        String cleanCommand = command.trim().replaceAll("\"", "");
+        String cleanCommand = command.trim().replace("\"", "");
         if (cleanCommand.startsWith("/")) {
             cleanCommand = cleanCommand.substring(1);
         }
@@ -145,7 +150,7 @@ public class SYPassCommands {
         String username = client.getUser().getName();
         String serverIp = client.getCurrentServer().ip;
 
-        PasswordManager.AccountData acc = PasswordManager.getPassword(serverIp, username);
+        AccountData acc = PasswordManager.getPassword(serverIp, username);
         String remoteId = (acc != null) ? acc.remoteId() : "";
         boolean wasSynced = (acc != null && acc.isSynced());
 

@@ -2,6 +2,7 @@ plugins {
     id 'dev.architectury.loom' version "${architectury_loom_version}" apply false
     id 'architectury-plugin' version "${architectury_plugin_version}"
     id 'com.gradleup.shadow' version "${shadow_version}" apply false
+    id 'io.github.pacifistmc.forgix' version "${forgix_version}"
 }
 
 architectury {
@@ -48,5 +49,20 @@ subprojects {
         withSourcesJar()
         sourceCompatibility = JavaVersion.VERSION_21
         targetCompatibility = JavaVersion.VERSION_21
+    }
+}
+
+forgix {
+    autoRun = true
+    archiveBaseName = rootProject.archives_name
+    archiveVersion = rootProject.mod_version
+    archiveClassifier = "fabric-neoforge-mc1.21-1.21.1"
+    destinationDirectory = layout.buildDirectory.dir("forgix")
+
+    fabric {
+        inputJar = project(":fabric").tasks.named("remapJar").flatMap { it.archiveFile }
+    }
+    neoforge {
+        inputJar = project(":neoforge").tasks.named("remapJar").flatMap { it.archiveFile }
     }
 }

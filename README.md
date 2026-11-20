@@ -1,83 +1,92 @@
 # SY-Pass
 
-**SY-Pass** is an open-source, client-side Minecraft mod for **Fabric, Quilt, and NeoForge (1.21 – 1.21.1)** designed to simplify and secure your in-game server authentication. It acts as an integrated password manager featuring robust AES-256-GCM local credential storage, automated server login, smart chat scanning, and optional cloud synchronization via the official **Bitwarden CLI**.
+**SY-Pass** is an open-source, client-side password manager and authentication utility for **Fabric, Quilt, and NeoForge (Minecraft 1.21 – 1.21.1)**. It provides hardened local credential storage (**AES-256-GCM**), automated server login, chat & command password leak protection, Master Password/PIN lock with Auto-Lock, Streamer Mode, and optional cloud synchronization via the official **Bitwarden CLI** or self-hosted **Vaultwarden** instances.
 
-Starting with version **2.2.0**, SY-Pass features **Auto-Lock Timeout** for the Master Password vault, **Streamer Mode** (masking server IPs and replacing favicons with neutral standard icons), **Command Leak Protection** (intercepts `/msg`, `/tell`, etc.), **Anti-Spoofing Hardening** on NeoForge, **Safe Bitwarden Vault Sync**, a dedicated **JUnit 5 Test Suite**, enhanced **Memory Sanitation (`char[]`)**, **Reflection-Proof Storage Protection**, **Universal CSV Import (KeePass, 1Password, Generic)**, and **Configurable Registration Templates & Custom Login Prompts**.
+Starting with **v2.3.0**, SY-Pass ships as a **single universal Fabric + NeoForge JAR** (merged via [Forgix 2.0](https://github.com/PacifistMC/Forgix)) alongside standalone loader JARs, and features a fully modularized architecture, masked Master/Backup password inputs, two-step vault reset confirmation, O(1) batch disk persistence on imports, and unified UTF-8 atomic `0600` file writes across config and vault storage.
 
 ---
 
-## 🚀 Features
+## 🚀 Key Features
 
-- **⚡ Multi-Loader Support:** Fully compatible with both **Fabric** (and Quilt) and **NeoForge** on Minecraft 1.21.1 with shared common code.
-- **🎨 Zero External UI Dependencies:** Built entirely with modern vanilla Minecraft GUI (`Screen`, `ContainerObjectSelectionList`, `EditBox`, `Button`, `Toast`), ensuring maximum performance, zero mod conflicts, and lightning-fast loading times.
-- **🔒 Memory Sanitation & Reflection Protection:** Passwords are stored and processed in memory as `char[]` rather than immutable `String` objects, with sensitive buffers explicitly zeroed out (`Arrays.fill(arr, '\0')`) immediately after clipboard copies, command dispatch, or vault serialization. Public access via `PasswordManager.getAllData()` returns sanitized metadata with empty passwords, shielding your credentials from reflection and rogue mods.
-- **🔐 Master Password / PIN Lock with Auto-Lock Timeout:** Protect local credentials with an optional Master Password or PIN (disabled by default). Uses envelope encryption with **PBKDF2WithHmacSHA256 (100,000 iterations)** and **AES-GCM**, locking the vault on startup until unlocked. Includes configurable **Auto-Lock Timeout** (5, 10, 15, 30, 60 minutes of inactivity), instant manual lock button, emergency reset, and restore via Bitwarden.
-- **🎥 Streamer Mode:** One-click toggle that masks server hostnames and IP addresses with asterisks (e.g. `**.*******.***`) and replaces custom server icons with neutral, standard Minecraft icons inside the mod menu. Disables in-place password reveals to guarantee zero credential or server leaks while streaming or recording.
-- **🔑 Hardened Local Storage:** Store, reveal, copy, edit, and manage credentials for each Minecraft server. All data is securely encrypted using **AES-256-GCM** in `config/sypass/sypass.json` with strict owner-only file permissions (`0600`), atomic writes to eliminate file truncation risks, and seamless automatic migration from legacy vaults.
-- **🖼️ Real Server Icons & Favicons:** Displays real server icons (`server.png` / favicon) from your multiplayer list (`servers.dat`) or active server connection directly beside each entry. Includes GPU texture caching and zero-overhead memory management.
-- **🛡️ Chat & Command Leak Protection:** Client-side protection that intercepts outgoing chat messages AND client commands (such as `/msg`, `/tell`, `/w`) before they leave your client. If you accidentally hit Enter on a message containing a saved password, sending is cancelled locally with an on-screen warning. Powered by the **Aho-Corasick** algorithm for instant $O(N)$ scanning with selectable scope: **Current Server Only** (default) or **All Servers (Global)**.
-- **⭐ Favorites, Sorting & Fast Filters:** Pin favorite servers with a star (★), filter to favorites in 1 click, and cycle sorting modes: **Favorites First** (with dedicated sections), **Alphabetical (A-Z)**, or **Last Used (🕒)**.
-- **🎯 Active Account Highlighting:** The account matching your currently active Minecraft username is highlighted in bright green with an ambient card outline and informative tooltip.
-- **🔒 Process Argument Isolation (Zero-Leakage):** Communicates with Bitwarden CLI strictly via standard input (`stdin`) rather than command-line arguments. Passwords, session tokens, and vault payloads are completely hidden from system process monitors (`ps`, Process Explorer) and audit logs.
-- **⚡ Smart & Automated Server Login (Spoof-Proof):** Automatically logs into servers upon connection (can be fully toggled on/off in Settings). Includes **Smart Auto-Login** that scans server system and action bar prompts (`/login`, `/l`, custom regex patterns) to authenticate dynamically without unnecessary delays, strict player chat spoofing protection on both Fabric and NeoForge, session timeout guard on licensed servers, and a dedicated **Quick Re-Login hotkey (`K`)** for on-demand authentication.
-- **✨ Configurable Registration Templates:** Support for custom registration commands (e.g., `/register %password% %password%`, `/reg %password%`). Generates a cryptographically secure password, copies it to the clipboard, saves it locally, syncs to Bitwarden, and submits the configured command. Includes built-in **Overwrite Protection**.
-- **🌐 Smart Server Address Matching:** Automatically normalizes server IP addresses and hostnames, seamlessly matching entries regardless of default ports (`:25565`) or case variations.
-- **☁️ Safe Bitwarden Cloud Sync:** Full two-way synchronization (Pull, Push, Full Sync) with your Bitwarden vault via the official Bitwarden CLI with non-destructive conflict handling. Disabled by default in Settings for a pure, local-first password management experience.
-- **📥 Universal CSV Import & Export:** Export and import passwords across all major password managers with automatic header detection: **Bitwarden CSV**, **KeePass (1.x & 2.x) CSV**, **1Password CSV**, and **Generic/Browser CSVs**.
-- **🛡️ Multi-Factor Authentication & Zero-Password Routing:** Native support for Authenticator App (TOTP), Email 2FA, API Key login, and direct **Session Key (`BW_SESSION`)** unlock — allowing you to unlock your vault without ever entering your master password inside the game!
-- **🔒 Security & CurseForge Compliant (No Runtime Downloads):** SY-Pass never downloads external binaries or executables at runtime. It interfaces strictly with the official Bitwarden CLI installed on your system or manually placed in `config/sypass/bw`.
-- **🎲 Password Generator:** Generate strong, cryptographically secure passwords (`/sypass generate [len]` or via GUI).
-- **💾 Local Encrypted Backups:** Export and import password backups with optional password-based encryption (PBKDF2) or portable unencrypted backups with restricted local filesystem permissions.
-- **🧪 Automated Unit Test Suite:** High-coverage JUnit 5 test suite verifying encryption round-trips, Aho-Corasick matching, CSV parsing, and password generation.
-- **💻 Client Commands:**
-  - `/sypass set <password>` — Save password for the current server.
-  - `/sypass setcustom <command> <password>` — Save password with a custom authentication command.
-  - `/sypass register [length]` (or `/sypass quickreg`) — Quick-register on the current server with an auto-generated password.
-  - `/sypass remove` — Remove saved password for the current server.
-  - `/sypass generate [length]` — Generate a strong password and copy to clipboard.
-- **🎨 ModMenu & NeoForge Mods Screen Integration:** Integrates into ModMenu on Fabric and the native Mods Config Screen on NeoForge. Default hotkeys: **`[`** (open GUI), **`K`** (quick login), and an optional customizable keybinding for **Quick Register**.
-- **🌐 Multilingual & Clean Assets:** 100% synchronized, deduplicated localization for Ukrainian (`uk_ua`), English (`en_us`), and Russian (`ru_ru`) maintained centrally in the common module.
+- **⚡ Universal Single-JAR Multi-Loader Support:** One JAR works seamlessly on **Fabric**, **Quilt**, and **NeoForge** for Minecraft 1.21 – 1.21.1, powered by Architectury Loom and Forgix.
+- **🎨 Zero External UI Dependencies:** Built entirely with vanilla Minecraft GUI components (`Screen`, `ContainerObjectSelectionList`, `EditBox`, `Button`, `Toast`), ensuring zero mod conflicts and native look-and-feel.
+- **🔐 Master Password / PIN Lock with Auto-Lock:** Protect your local vault with PBKDF2-HMAC-SHA256 (100,000 iterations) + AES-256-GCM envelope encryption, masked password fields, configurable **Auto-Lock Timeout** (5–60 min), instant manual lock, two-step emergency reset, and Bitwarden recovery.
+- **🔒 Memory Sanitation & Reflection Protection:** Credentials are stored as mutable `char[]` buffers and zeroed (`Arrays.fill`) right after use. `PasswordManager.getAllData()` returns sanitized metadata with blanked passwords to block rogue mods and reflection inspection.
+- **🎥 Streamer Mode:** Masks server hostnames/IPs, replaces custom server favicons with neutral icons, and disables in-place password reveals while streaming or recording.
+- **🔑 Hardened Local Vault (AES-256-GCM):** Encrypted in `config/sypass/sypass.json` with owner-only permissions (`0600`), atomic temp-file replacement, UTF-8 encoding, and seamless migration from legacy vaults.
+- **🛡️ Chat & Command Leak Protection:** Client-side Aho-Corasick ($O(N)$) outgoing interception for both public chat and private commands (`/msg`, `/tell`, `/w`), with selectable scope: **Current Server Only** (default) or **All Servers (Global)**.
+- **⚡ Smart & Automated Server Authentication:**
+  - **Static Delay Login** & **Smart Auto-Login** (scans system chat & action bar for `/login`, `/l`, or validated custom regex patterns with pagination).
+  - **Anti-Spoofing Hardening** on both Fabric and NeoForge.
+  - **Quick Re-Login Hotkey (`K`)** and configurable **Quick Register** templates (`/register %password% %password%`, `/reg %p%`, etc.) with Overwrite Protection.
+- **☁️ Safe Bitwarden & Vaultwarden Cloud Sync:** Optional two-way sync (Pull, Push, Full Sync) via official Bitwarden CLI using `stdin`/environment isolation (zero credentials in CLI arguments). Supports TOTP, Email 2FA, API Key, and direct `BW_SESSION` unlock.
+- **📥 Universal CSV & Encrypted JSON Backups:** Auto-detects **Bitwarden**, **KeePass 1.x/2.x**, **1Password**, and **Generic/Browser CSVs**, plus PBKDF2-encrypted JSON backups.
+- **🌐 Multilingual:** 100% synchronized localization for English (`en_us`), Ukrainian (`uk_ua`), and Russian (`ru_ru`).
+
+---
+
+## 💻 Client Commands
+
+| Command | Description |
+| :--- | :--- |
+| `/sypass set <password>` | Save or overwrite password for the current server |
+| `/sypass setcustom <command> <password>` | Save password with a custom login command |
+| `/sypass register [length]` *(or `/sypass quickreg`)* | Generate a strong password, save, copy, and register |
+| `/sypass remove` | Delete stored credentials for the current server |
+| `/sypass generate [length]` | Generate a secure password and copy to clipboard |
+
+---
+
+## 🎮 Controls & Integration
+
+- **`[`** — Open SY-Pass Vault Screen *(configurable)*
+- **`K`** — Quick Re-Login *(configurable)*
+- **Quick Register** — Optional customizable hotkey
+- **ModMenu** (Fabric/Quilt) & native **NeoForge Mods Config Screen** integration
 
 ---
 
 ## 🛠️ Requirements
 
-- **Minecraft:** 1.21.1
+- **Minecraft:** 1.21 – 1.21.1
 - **Java:** 21+
-- **Loader:**
-  - **Fabric:** Fabric Loader (>= 0.16.0) + Fabric API
-  - **NeoForge:** NeoForge (>= 21.1.0)
-- *(Optional)* **Bitwarden CLI:** Only required if Bitwarden sync is enabled in settings. Can be installed on your system (`winget install Bitwarden.CLI`, `brew install bitwarden-cli`, or `npm install -g @bitwarden/cli`), or placed manually into `config/sypass/bw` (`bw.exe` on Windows).
+- **Mod Loader:** Fabric Loader (`>= 0.16.0`) + Fabric API, **or** NeoForge (`>= 21.1.0`)
+- *(Optional)* **Bitwarden CLI:** Install via `winget install Bitwarden.CLI`, `brew install bitwarden-cli`, `npm install -g @bitwarden/cli`, or place the binary manually in `config/sypass/bw/` (`bw.exe` on Windows, `bw` on Linux/macOS).
+
+> 🔒 **CurseForge Compliant:** SY-Pass never downloads external binaries or scripts at runtime.
+
+---
+
+## 🏗️ Architecture
+
+```text
+common/src/main/java/com/syntren/sypass/
+├── SYPassCommon.java           # Common entrypoint
+├── command/SYPassCommands.java # Brigadier client command tree
+├── config/SYPassConfig.java    # Thread-safe UTF-8 atomic config
+├── gui/                        # Modular vanilla GUI (Screen, Tabs, LockView, List, Toast, Icons)
+├── handler/AutoLoginHandler.java
+├── platform/PlatformHelper.java
+├── security/VaultCrypto.java   # AES-256-GCM, PBKDF2, atomic 0600 file I/O
+├── storage/                    # PasswordManager, AccountData, BackupService, CsvCodec, BitwardenManager
+└── util/                       # ChatLeakGuard, ChatProtectionMatcher, PasswordGenerator, ServerAddressUtil
+```
 
 ---
 
 ## 📦 Building from Source
 
-To compile both the Fabric and NeoForge versions, run:
-
 ```bash
-./gradlew build
+./gradlew clean test build
 ```
 
-The compiled mod JAR files will be placed in:
-```
-fabric/build/libs/sypass-fabric-2.2.0-mc1.21-1.21.1.jar
-neoforge/build/libs/sypass-neoforge-2.2.0-mc1.21-1.21.1.jar
-```
-
-To run the automated JUnit 5 test suite:
-```bash
-./gradlew test
-```
+Artifacts produced:
+- **Universal Merged JAR (Fabric + NeoForge):** `build/forgix/sypass-2.3.0-fabric-neoforge-mc1.21-1.21.1.jar`
+- **Standalone Fabric JAR:** `fabric/build/libs/sypass-fabric-2.3.0-mc1.21-1.21.1.jar`
+- **Standalone NeoForge JAR:** `neoforge/build/libs/sypass-neoforge-2.3.0-mc1.21-1.21.1.jar`
 
 ---
 
-## ⚖️ Disclaimer & Notice
+## ⚖️ Disclaimer & License
 
-This project is an unofficial open-source Minecraft mod and is **not affiliated with, endorsed by, or sponsored by Bitwarden Inc.** "Bitwarden" and associated trademarks belong to Bitwarden Inc. SY-Pass interacts with Bitwarden strictly as a client utility by orchestrating the official open-source Bitwarden CLI tool.
-
----
-
-## 📄 License
-
-This project is licensed under the [MIT License](LICENSE).
+Independent open-source project, **not affiliated with or endorsed by Bitwarden Inc.** Licensed under the [MIT License](LICENSE).

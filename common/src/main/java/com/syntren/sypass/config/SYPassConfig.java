@@ -2,29 +2,31 @@ package com.syntren.sypass.config;
 
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
+import com.syntren.sypass.SYPassCommon;
 import com.syntren.sypass.handler.AutoLoginHandler;
 import com.syntren.sypass.platform.PlatformHelper;
+import com.syntren.sypass.security.VaultCrypto;
 
-import java.io.File;
-import java.io.FileReader;
-import java.io.FileWriter;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 
-public class SYPassConfig {
+public final class SYPassConfig {
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
+    private static volatile ConfigData data = new ConfigData();
 
-    private static Path getConfigDir() {
+    private SYPassConfig() {}
+
+    public static Path getConfigDir() {
         return PlatformHelper.get().getConfigDir().resolve("sypass");
     }
 
     private static Path getConfigFile() {
         return getConfigDir().resolve("config.json");
     }
-
-    private static ConfigData data = new ConfigData();
 
     public enum ChatProtectionScope {
         ALL_SERVERS("sypass.gui.settings.chat_scope.all"),
@@ -57,46 +59,45 @@ public class SYPassConfig {
         public int defaultPasswordLength = 16;
         public boolean masterPasswordEnabled = false;
         public String masterPasswordSalt = "";
-        public int masterPasswordIterations = 100000;
-        public String masterPasswordVerifier = "";
+        public int masterPasswordIterations = VaultCrypto.DEFAULT_PBKDF2_ITERATIONS;
         public int autoLockTimeoutMinutes = 0;
         public String registerCommandTemplate = "/register %password% %password%";
         public List<String> customLoginPatterns = new ArrayList<>();
     }
 
-    public static void load() {
+    public static synchronized void load() {
         try {
             Path configDir = getConfigDir();
             if (!Files.exists(configDir)) {
                 Files.createDirectories(configDir);
             }
-            File file = getConfigFile().toFile();
-            if (file.exists()) {
-                try (FileReader reader = new FileReader(file)) {
-                    ConfigData loaded = GSON.fromJson(reader, ConfigData.class);
-                    if (loaded != null) {
-                        data = loaded;
+            Path file = getConfigFile();
+            if (Files.exists(file)) {
+                String json = Files.readString(file, StandardCharsets.UTF_8);
+                ConfigData loaded = GSON.fromJson(json, ConfigData.class);
+                if (loaded != null) {
+                    if (loaded.customLoginPatterns == null) {
+                        loaded.customLoginPatterns = new ArrayList<>();
                     }
+                    if (loaded.chatProtectionScope == null) {
+                        loaded.chatProtectionScope = ChatProtectionScope.CURRENT_SERVER;
+                    }
+                    data = loaded;
                 }
             } else {
                 save();
             }
         } catch (Exception e) {
-            e.printStackTrace();
+            SYPassCommon.LOGGER.error("[SY-Pass] Failed to load config.json", e);
         }
     }
 
-    public static void save() {
+    public static synchronized void save() {
         try {
-            Path configDir = getConfigDir();
-            if (!Files.exists(configDir)) {
-                Files.createDirectories(configDir);
-            }
-            try (FileWriter writer = new FileWriter(getConfigFile().toFile())) {
-                GSON.toJson(data, writer);
-            }
+            byte[] bytes = GSON.toJson(data).getBytes(StandardCharsets.UTF_8);
+            VaultCrypto.writeSecureFile(getConfigFile(), bytes);
         } catch (Exception e) {
-            e.printStackTrace();
+            SYPassCommon.LOGGER.error("[SY-Pass] Failed to save config.json", e);
         }
     }
 
@@ -182,10 +183,8 @@ public class SYPassConfig {
     }
 
     public static ChatProtectionScope getChatProtectionScope() {
-        if (data.chatProtectionScope == null) {
-            data.chatProtectionScope = ChatProtectionScope.CURRENT_SERVER;
-        }
-        return data.chatProtectionScope;
+        ChatProtectionScope scope = data.chatProtectionScope;
+        return scope != null ? scope : ChatProtectionScope.CURRENT_SERVER;
     }
 
     public static void setChatProtectionScope(ChatProtectionScope scope) {
@@ -203,10 +202,8 @@ public class SYPassConfig {
     }
 
     public static int getDefaultPasswordLength() {
-        if (data.defaultPasswordLength < 6 || data.defaultPasswordLength > 64) {
-            data.defaultPasswordLength = 16;
-        }
-        return data.defaultPasswordLength;
+        int len = data.defaultPasswordLength;
+        return (len >= 6 && len <= 64) ? len : 16;
     }
 
     public static void setDefaultPasswordLength(int length) {
@@ -242,28 +239,17 @@ public class SYPassConfig {
     }
 
     public static int getMasterPasswordIterations() {
-        return data.masterPasswordIterations > 0 ? data.masterPasswordIterations : 100000;
+        return data.masterPasswordIterations > 0 ? data.masterPasswordIterations : VaultCrypto.DEFAULT_PBKDF2_ITERATIONS;
     }
 
     public static void setMasterPasswordIterations(int iterations) {
-        data.masterPasswordIterations = Math.max(10000, iterations);
-        save();
-    }
-
-    public static String getMasterPasswordVerifier() {
-        return data.masterPasswordVerifier != null ? data.masterPasswordVerifier : "";
-    }
-
-    public static void setMasterPasswordVerifier(String verifier) {
-        data.masterPasswordVerifier = verifier != null ? verifier : "";
+        data.masterPasswordIterations = Math.max(10_000, iterations);
         save();
     }
 
     public static int getAutoLockTimeoutMinutes() {
-        if (data.autoLockTimeoutMinutes < 0 || data.autoLockTimeoutMinutes > 120) {
-            data.autoLockTimeoutMinutes = 0;
-        }
-        return data.autoLockTimeoutMinutes;
+        int timeout = data.autoLockTimeoutMinutes;
+        return (timeout >= 0 && timeout <= 120) ? timeout : 0;
     }
 
     public static void setAutoLockTimeoutMinutes(int minutes) {
@@ -273,47 +259,52 @@ public class SYPassConfig {
 
     public static String getRegisterCommandTemplate() {
         if (data.registerCommandTemplate == null || data.registerCommandTemplate.isBlank()) {
-            data.registerCommandTemplate = "/register %password% %password%";
+            return "/register %password% %password%";
         }
         return data.registerCommandTemplate;
     }
 
     public static void setRegisterCommandTemplate(String template) {
-        data.registerCommandTemplate = (template != null && !template.isBlank()) ? template.trim() : "/register %password% %password%";
+        data.registerCommandTemplate = (template != null && !template.isBlank())
+                ? template.trim()
+                : "/register %password% %password%";
         save();
     }
 
-    public static List<String> getCustomLoginPatterns() {
+    public static synchronized List<String> getCustomLoginPatterns() {
         if (data.customLoginPatterns == null) {
             data.customLoginPatterns = new ArrayList<>();
         }
-        return data.customLoginPatterns;
+        return Collections.unmodifiableList(new ArrayList<>(data.customLoginPatterns));
     }
 
-    public static void setCustomLoginPatterns(List<String> patterns) {
+    public static synchronized void setCustomLoginPatterns(List<String> patterns) {
         data.customLoginPatterns = patterns != null ? new ArrayList<>(patterns) : new ArrayList<>();
         save();
         AutoLoginHandler.invalidateCustomPatterns();
     }
 
-    public static void addCustomLoginPattern(String pattern) {
-        if (pattern != null && !pattern.isBlank()) {
-            if (data.customLoginPatterns == null) {
-                data.customLoginPatterns = new ArrayList<>();
-            }
-            if (!data.customLoginPatterns.contains(pattern.trim())) {
-                data.customLoginPatterns.add(pattern.trim());
+    public static synchronized boolean addCustomLoginPattern(String pattern) {
+        if (pattern == null || pattern.isBlank()) return false;
+        String trimmed = pattern.trim();
+        if (data.customLoginPatterns == null) {
+            data.customLoginPatterns = new ArrayList<>();
+        }
+        if (data.customLoginPatterns.contains(trimmed)) {
+            return false;
+        }
+        data.customLoginPatterns.add(trimmed);
+        save();
+        AutoLoginHandler.invalidateCustomPatterns();
+        return true;
+    }
+
+    public static synchronized void removeCustomLoginPattern(String pattern) {
+        if (data.customLoginPatterns != null && pattern != null) {
+            if (data.customLoginPatterns.remove(pattern.trim())) {
                 save();
                 AutoLoginHandler.invalidateCustomPatterns();
             }
-        }
-    }
-
-    public static void removeCustomLoginPattern(String pattern) {
-        if (data.customLoginPatterns != null && pattern != null) {
-            data.customLoginPatterns.remove(pattern.trim());
-            save();
-            AutoLoginHandler.invalidateCustomPatterns();
         }
     }
 }

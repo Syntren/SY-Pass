@@ -5,13 +5,15 @@ import com.syntren.sypass.SYPassCommon;
 import com.syntren.sypass.command.SYPassCommands;
 import com.syntren.sypass.config.SYPassConfig;
 import com.syntren.sypass.gui.SYPassScreen;
+import com.syntren.sypass.gui.ServerIconManager;
 import com.syntren.sypass.handler.AutoLoginHandler;
-import com.syntren.sypass.util.ChatProtectionMatcher;
-import net.minecraft.ChatFormatting;
+import com.syntren.sypass.neoforge.platform.NeoForgePlatformHelper;
+import com.syntren.sypass.util.ChatLeakGuard;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.components.EditBox;
+import net.minecraft.client.gui.screens.ChatScreen;
 import net.minecraft.client.multiplayer.ServerData;
-import net.minecraft.network.chat.Component;
 import net.neoforged.api.distmarker.Dist;
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.bus.api.SubscribeEvent;
@@ -22,9 +24,7 @@ import net.neoforged.neoforge.client.gui.IConfigScreenFactory;
 import net.neoforged.neoforge.common.NeoForge;
 import org.lwjgl.glfw.GLFW;
 
-import java.util.Objects;
-
-@Mod(value = "sypass", dist = Dist.CLIENT)
+@Mod(value = SYPassCommon.MOD_ID, dist = Dist.CLIENT)
 public class SYPassNeoForge {
 
     private static KeyMapping openGuiKeyMapping;
@@ -32,15 +32,10 @@ public class SYPassNeoForge {
     private static KeyMapping quickRegisterKeyMapping;
 
     public SYPassNeoForge(IEventBus modEventBus, ModContainer container) {
-        SYPassCommon.init();
+        SYPassCommon.init(new NeoForgePlatformHelper());
 
-        // 1. Інтеграція меню конфігурації у список модів NeoForge
         container.registerExtensionPoint(IConfigScreenFactory.class, (mc, parent) -> new SYPassScreen(parent));
-
-        // 2. Реєстрація клавіш у шині життєвого циклу моду
         modEventBus.addListener(this::onRegisterKeyMappings);
-
-        // 3. Підписка на події NeoForge гри
         NeoForge.EVENT_BUS.register(this);
     }
 
@@ -125,9 +120,10 @@ public class SYPassNeoForge {
     @SubscribeEvent
     public void onLoggingOut(ClientPlayerNetworkEvent.LoggingOut event) {
         AutoLoginHandler.onDisconnect();
+        ServerIconManager.clearCache();
     }
 
-    // Only process system and game messages to prevent spoofing via player chat
+    // Only process system/game messages to prevent spoofing via player chat
     @SubscribeEvent
     public void onChatReceived(ClientChatReceivedEvent.System event) {
         AutoLoginHandler.onIncomingMessage(event.getMessage().getString(), Minecraft.getInstance());
@@ -135,7 +131,7 @@ public class SYPassNeoForge {
 
     @SubscribeEvent
     public void onClientChat(ClientChatEvent event) {
-        if (!checkLeakAndNotify(event.getMessage(), false)) {
+        if (!ChatLeakGuard.allowOutgoing(event.getMessage(), false)) {
             event.setCanceled(true);
         }
     }
@@ -145,12 +141,12 @@ public class SYPassNeoForge {
         if (!SYPassConfig.isChatLeakProtectionEnabled()) return;
         if (event.getKeyCode() != GLFW.GLFW_KEY_ENTER && event.getKeyCode() != GLFW.GLFW_KEY_KP_ENTER) return;
 
-        if (event.getScreen() instanceof net.minecraft.client.gui.screens.ChatScreen chatScreen) {
+        if (event.getScreen() instanceof ChatScreen chatScreen) {
             for (var child : chatScreen.children()) {
-                if (child instanceof net.minecraft.client.gui.components.EditBox editBox) {
+                if (child instanceof EditBox editBox) {
                     String text = editBox.getValue();
                     if (text != null && text.startsWith("/")) {
-                        if (!checkLeakAndNotify(text.substring(1), true)) {
+                        if (!ChatLeakGuard.allowOutgoing(text.substring(1), true)) {
                             event.setCanceled(true);
                             return;
                         }
@@ -158,43 +154,5 @@ public class SYPassNeoForge {
                 }
             }
         }
-    }
-
-    private static boolean checkLeakAndNotify(String message, boolean isCommand) {
-        if (!SYPassConfig.isChatLeakProtectionEnabled() || message == null || message.isBlank()) {
-            return true;
-        }
-
-        if (isCommand && AutoLoginHandler.isDispatchingAuth()) {
-            return true;
-        }
-
-        Minecraft client = Minecraft.getInstance();
-        var player = client.player;
-        if (player == null) return true;
-
-        ServerData server = client.getCurrentServer();
-        String serverAddress = (server != null && server.ip != null) ? server.ip : "";
-
-        if (isCommand && ChatProtectionMatcher.isAuthCommand(message, serverAddress)) {
-            return true;
-        }
-
-        boolean leaks = ChatProtectionMatcher.checkMessageLeaks(
-                message,
-                serverAddress,
-                SYPassConfig.getChatProtectionScope()
-        );
-
-        if (leaks) {
-            String msgKey = (SYPassConfig.getChatProtectionScope() == SYPassConfig.ChatProtectionScope.ALL_SERVERS)
-                    ? "sypass.chat.blocked_leak_all"
-                    : "sypass.chat.blocked_leak";
-            Component chatMessage = Component.translatable(msgKey).withStyle(ChatFormatting.RED);
-            player.displayClientMessage(Objects.requireNonNull(chatMessage), false);
-            return false;
-        }
-
-        return true;
     }
 }

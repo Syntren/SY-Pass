@@ -3,11 +3,11 @@ package com.syntren.sypass.fabric;
 import com.mojang.blaze3d.platform.InputConstants;
 import com.syntren.sypass.SYPassCommon;
 import com.syntren.sypass.command.SYPassCommands;
-import com.syntren.sypass.config.SYPassConfig;
+import com.syntren.sypass.fabric.platform.FabricPlatformHelper;
 import com.syntren.sypass.gui.SYPassScreen;
 import com.syntren.sypass.gui.ServerIconManager;
 import com.syntren.sypass.handler.AutoLoginHandler;
-import com.syntren.sypass.util.ChatProtectionMatcher;
+import com.syntren.sypass.util.ChatLeakGuard;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallback;
 import net.fabricmc.fabric.api.client.command.v2.FabricClientCommandSource;
@@ -17,11 +17,9 @@ import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
 import net.fabricmc.fabric.api.client.message.v1.ClientReceiveMessageEvents;
 import net.fabricmc.fabric.api.client.message.v1.ClientSendMessageEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
-import net.minecraft.ChatFormatting;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ServerData;
-import net.minecraft.network.chat.Component;
 import org.lwjgl.glfw.GLFW;
 
 public class SYPassFabric implements ClientModInitializer {
@@ -31,18 +29,16 @@ public class SYPassFabric implements ClientModInitializer {
 
     @Override
     public void onInitializeClient() {
-        SYPassCommon.init();
+        SYPassCommon.init(new FabricPlatformHelper());
 
-        // 1. Реєстрація команд
-        ClientCommandRegistrationCallback.EVENT.register((dispatcher, registryAccess) -> {
-            dispatcher.register(SYPassCommands.buildCommandTree(
-                    FabricClientCommandSource::getClient,
-                    FabricClientCommandSource::sendFeedback,
-                    FabricClientCommandSource::sendError
-            ));
-        });
+        ClientCommandRegistrationCallback.EVENT.register((dispatcher, registryAccess) ->
+                dispatcher.register(SYPassCommands.buildCommandTree(
+                        FabricClientCommandSource::getClient,
+                        FabricClientCommandSource::sendFeedback,
+                        FabricClientCommandSource::sendError
+                ))
+        );
 
-        // 2. Реєстрація хоткеїв
         openGuiKeyMapping = KeyBindingHelper.registerKeyBinding(new KeyMapping(
                 "key.sypass.open_gui",
                 InputConstants.Type.KEYSYM,
@@ -64,7 +60,6 @@ public class SYPassFabric implements ClientModInitializer {
                 "category.sypass.title"
         ));
 
-        // 3. Відстеження входу на сервер
         ClientPlayConnectionEvents.JOIN.register((handler, sender, client) -> {
             ServerData server = client.getCurrentServer();
             if (server != null && client.getUser() != null) {
@@ -72,12 +67,8 @@ public class SYPassFabric implements ClientModInitializer {
             }
         });
 
-        // 4. Відстеження виходу з сервера
-        ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> {
-            AutoLoginHandler.onDisconnect();
-        });
+        ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> AutoLoginHandler.onDisconnect());
 
-        // 5. Відстеження тіків та натискання клавіш
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
             AutoLoginHandler.onClientTick(client);
 
@@ -94,7 +85,6 @@ public class SYPassFabric implements ClientModInitializer {
             }
         });
 
-        // 6. Отримання повідомлень від сервера (Smart Auto-Login)
         ClientReceiveMessageEvents.GAME.register((message, overlay) -> {
             if (message != null) {
                 AutoLoginHandler.onIncomingMessage(message.getString(), Minecraft.getInstance());
@@ -107,50 +97,9 @@ public class SYPassFabric implements ClientModInitializer {
             }
         });
 
-        // 7. Захист від витоку паролів у чат та команди
-        ClientSendMessageEvents.ALLOW_CHAT.register(message -> checkLeakAndNotify(message, false));
-        ClientSendMessageEvents.ALLOW_COMMAND.register(command -> checkLeakAndNotify(command, true));
+        ClientSendMessageEvents.ALLOW_CHAT.register(message -> ChatLeakGuard.allowOutgoing(message, false));
+        ClientSendMessageEvents.ALLOW_COMMAND.register(command -> ChatLeakGuard.allowOutgoing(command, true));
 
-        // 8. Очищення кешу іконок при зупинці гри
         ClientLifecycleEvents.CLIENT_STOPPING.register(client -> ServerIconManager.clearCache());
-    }
-
-    private static boolean checkLeakAndNotify(String message, boolean isCommand) {
-        if (!SYPassConfig.isChatLeakProtectionEnabled() || message == null || message.isBlank()) {
-            return true;
-        }
-
-        if (isCommand && AutoLoginHandler.isDispatchingAuth()) {
-            return true;
-        }
-
-        Minecraft client = Minecraft.getInstance();
-        if (client == null || client.player == null) return true;
-
-        ServerData server = client.getCurrentServer();
-        String serverAddress = (server != null) ? server.ip : "";
-
-        if (isCommand && ChatProtectionMatcher.isAuthCommand(message, serverAddress)) {
-            return true;
-        }
-
-        boolean leaks = ChatProtectionMatcher.checkMessageLeaks(
-                message,
-                serverAddress,
-                SYPassConfig.getChatProtectionScope()
-        );
-
-        if (leaks) {
-            String msgKey = (SYPassConfig.getChatProtectionScope() == SYPassConfig.ChatProtectionScope.ALL_SERVERS)
-                    ? "sypass.chat.blocked_leak_all"
-                    : "sypass.chat.blocked_leak";
-            client.player.displayClientMessage(
-                    Component.translatable(msgKey).withStyle(ChatFormatting.RED),
-                    false
-            );
-            return false;
-        }
-
-        return true;
     }
 }

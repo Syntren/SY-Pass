@@ -2,9 +2,11 @@ package com.syntren.sypass.gui;
 
 import com.syntren.sypass.config.SYPassConfig;
 import com.syntren.sypass.platform.PlatformHelper;
+import com.syntren.sypass.storage.AccountData;
 import com.syntren.sypass.storage.BitwardenManager;
 import com.syntren.sypass.storage.PasswordManager;
 import com.syntren.sypass.util.PasswordGenerator;
+import com.syntren.sypass.util.ServerAddressUtil;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.Checkbox;
@@ -22,6 +24,9 @@ import net.minecraft.util.FormattedCharSequence;
 
 public class EditPasswordScreen extends Screen {
 
+    private static final int CARD_WIDTH = 310;
+    private static final int FIELD_HEIGHT = 20;
+
     private final Screen parent;
     private final boolean isEditing;
     private final String initialServerIp;
@@ -38,14 +43,11 @@ public class EditPasswordScreen extends Screen {
 
     private boolean showPassword = true;
     private int generatedPasswordLength;
-    private Button toggleShowPasswordButton;
     private Button lengthSelectorButton;
 
-    private static final int CARD_WIDTH = 310;
-    private static final int FIELD_HEIGHT = 20;
-
     public EditPasswordScreen(Screen parent) {
-        this(parent, "", "", "", "/login", SYPassConfig.isBitwardenEnabled() && BitwardenManager.hasActiveSession() && SYPassConfig.isAutoSyncEnabled());
+        this(parent, "", "", "", "/login",
+                SYPassConfig.isBitwardenEnabled() && BitwardenManager.hasActiveSession() && SYPassConfig.isAutoSyncEnabled());
     }
 
     public EditPasswordScreen(Screen parent, String serverIp, String username, String password, String command, boolean isSynced) {
@@ -80,21 +82,20 @@ public class EditPasswordScreen extends Screen {
         LinearLayout rootLayout = LinearLayout.vertical().spacing(5);
         rootLayout.defaultCellSetting().alignHorizontallyCenter();
 
-        // Заголовок
         rootLayout.addChild(new StringWidget(this.title, this.font));
 
-        // 1. Поле адреси сервера
+        // 1. Server address
         rootLayout.addChild(new StringWidget(CARD_WIDTH, 9, Component.translatable("sypass.gui.edit.server").withStyle(s -> s.withColor(0xAAAAAA)), this.font).alignLeft());
         this.serverIpEditBox = new EditBox(this.font, 0, 0, CARD_WIDTH, FIELD_HEIGHT, Component.translatable("sypass.gui.edit.server"));
         this.serverIpEditBox.setMaxLength(256);
         this.serverIpEditBox.setValue(defaultServer);
         this.serverIpEditBox.setHint(Component.literal("mc.example.com / 127.0.0.1:25565"));
         if (SYPassConfig.isStreamerModeEnabled()) {
-            this.serverIpEditBox.setFormatter((string, pos) -> FormattedCharSequence.forward(PasswordManager.maskServerAddress(string), Style.EMPTY));
+            this.serverIpEditBox.setFormatter((string, pos) -> FormattedCharSequence.forward(ServerAddressUtil.mask(string), Style.EMPTY));
         }
         rootLayout.addChild(this.serverIpEditBox);
 
-        // 2. Поле нікнейму
+        // 2. Username
         rootLayout.addChild(new StringWidget(CARD_WIDTH, 9, Component.translatable("sypass.gui.edit.username").withStyle(s -> s.withColor(0xAAAAAA)), this.font).alignLeft());
         this.usernameEditBox = new EditBox(this.font, 0, 0, CARD_WIDTH, FIELD_HEIGHT, Component.translatable("sypass.gui.edit.username"));
         this.usernameEditBox.setMaxLength(256);
@@ -102,7 +103,7 @@ public class EditPasswordScreen extends Screen {
         this.usernameEditBox.setHint(Component.literal("PlayerName"));
         rootLayout.addChild(this.usernameEditBox);
 
-        // 3. Пароль та інструменти генератора
+        // 3. Password & generator controls
         rootLayout.addChild(new StringWidget(CARD_WIDTH, 9, Component.translatable("sypass.gui.edit.password").withStyle(s -> s.withColor(0xAAAAAA)), this.font).alignLeft());
 
         LinearLayout passwordRow = LinearLayout.horizontal().spacing(3);
@@ -116,40 +117,43 @@ public class EditPasswordScreen extends Screen {
         this.passwordEditBox = new EditBox(this.font, 0, 0, passInputWidth, FIELD_HEIGHT, Component.translatable("sypass.gui.edit.password"));
         this.passwordEditBox.setMaxLength(256);
         this.passwordEditBox.setValue(initialPassword);
-        updatePasswordMask();
+        GuiHelpers.applyPasswordMask(this.passwordEditBox, showPassword);
         passwordRow.addChild(this.passwordEditBox);
 
-        // Перемикач видимості пароля
-        this.toggleShowPasswordButton = Button.builder(Component.literal(showPassword ? "§a●" : "§7○"), btn -> {
+        Button toggleShowPasswordButton = Button.builder(Component.literal(showPassword ? "§a●" : "§7○"), btn -> {
             if (SYPassConfig.isStreamerModeEnabled()) return;
             showPassword = !showPassword;
             btn.setMessage(Component.literal(showPassword ? "§a●" : "§7○"));
             btn.setTooltip(Tooltip.create(Component.translatable(showPassword ? "sypass.gui.button.hide" : "sypass.gui.button.show")));
-            updatePasswordMask();
-        }).bounds(0, 0, 22, FIELD_HEIGHT).tooltip(Tooltip.create(Component.translatable(SYPassConfig.isStreamerModeEnabled() ? "sypass.gui.settings.streamer_mode.tooltip" : (showPassword ? "sypass.gui.button.hide" : "sypass.gui.button.show")))).build();
+            GuiHelpers.applyPasswordMask(this.passwordEditBox, showPassword);
+        }).bounds(0, 0, 22, FIELD_HEIGHT)
+          .tooltip(Tooltip.create(Component.translatable(SYPassConfig.isStreamerModeEnabled()
+                  ? "sypass.gui.settings.streamer_mode.tooltip"
+                  : (showPassword ? "sypass.gui.button.hide" : "sypass.gui.button.show"))))
+          .build();
         if (SYPassConfig.isStreamerModeEnabled()) {
-            this.toggleShowPasswordButton.active = false;
+            toggleShowPasswordButton.active = false;
         }
-        passwordRow.addChild(this.toggleShowPasswordButton);
+        passwordRow.addChild(toggleShowPasswordButton);
 
-        // Кнопка генерації пароля
         Button generateButton = Button.builder(Component.literal("🎲"), btn -> {
             String generated = PasswordGenerator.generate(this.generatedPasswordLength);
             this.passwordEditBox.setValue(generated);
             PlatformHelper.get().copyToClipboard(generated);
             this.errorWidget.setMessage(Component.translatable("sypass.gui.edit.generated_copied").withStyle(s -> s.withColor(0x55FF55)));
-        }).bounds(0, 0, 22, FIELD_HEIGHT).tooltip(Tooltip.create(Component.translatable("sypass.gui.button.generate.tooltip"))).build();
+        }).bounds(0, 0, 22, FIELD_HEIGHT)
+          .tooltip(Tooltip.create(Component.translatable("sypass.gui.button.generate.tooltip")))
+          .build();
         passwordRow.addChild(generateButton);
 
-        // Зменшити довжину (-)
-        Button minusLenButton = Button.builder(Component.literal("-"), btn -> {
+        passwordRow.addChild(Button.builder(Component.literal("-"), btn -> {
             this.generatedPasswordLength = Math.max(6, this.generatedPasswordLength - 1);
             SYPassConfig.setDefaultPasswordLength(this.generatedPasswordLength);
             updateLengthButton();
-        }).bounds(0, 0, 16, FIELD_HEIGHT).tooltip(Tooltip.create(Component.translatable("sypass.gui.edit.length.minus.tooltip"))).build();
-        passwordRow.addChild(minusLenButton);
+        }).bounds(0, 0, 16, FIELD_HEIGHT)
+          .tooltip(Tooltip.create(Component.translatable("sypass.gui.edit.length.minus.tooltip")))
+          .build());
 
-        // Індикатор/вибір поточної довжини
         this.lengthSelectorButton = Button.builder(Component.literal(String.valueOf(this.generatedPasswordLength)), btn -> {
             this.generatedPasswordLength = switch (this.generatedPasswordLength) {
                 case 8 -> 12;
@@ -161,20 +165,22 @@ public class EditPasswordScreen extends Screen {
             };
             SYPassConfig.setDefaultPasswordLength(this.generatedPasswordLength);
             updateLengthButton();
-        }).bounds(0, 0, 22, FIELD_HEIGHT).tooltip(Tooltip.create(Component.translatable("sypass.gui.edit.length.tooltip", this.generatedPasswordLength))).build();
+        }).bounds(0, 0, 22, FIELD_HEIGHT)
+          .tooltip(Tooltip.create(Component.translatable("sypass.gui.edit.length.tooltip", this.generatedPasswordLength)))
+          .build();
         passwordRow.addChild(this.lengthSelectorButton);
 
-        // Збільшити довжину (+)
-        Button plusLenButton = Button.builder(Component.literal("+"), btn -> {
+        passwordRow.addChild(Button.builder(Component.literal("+"), btn -> {
             this.generatedPasswordLength = Math.min(64, this.generatedPasswordLength + 1);
             SYPassConfig.setDefaultPasswordLength(this.generatedPasswordLength);
             updateLengthButton();
-        }).bounds(0, 0, 16, FIELD_HEIGHT).tooltip(Tooltip.create(Component.translatable("sypass.gui.edit.length.plus.tooltip"))).build();
-        passwordRow.addChild(plusLenButton);
+        }).bounds(0, 0, 16, FIELD_HEIGHT)
+          .tooltip(Tooltip.create(Component.translatable("sypass.gui.edit.length.plus.tooltip")))
+          .build());
 
         rootLayout.addChild(passwordRow);
 
-        // 4. Поле команди входу
+        // 4. Login command
         rootLayout.addChild(new StringWidget(CARD_WIDTH, 9, Component.translatable("sypass.gui.edit.command").withStyle(s -> s.withColor(0xAAAAAA)), this.font).alignLeft());
         this.commandEditBox = new EditBox(this.font, 0, 0, CARD_WIDTH, FIELD_HEIGHT, Component.translatable("sypass.gui.edit.command"));
         this.commandEditBox.setMaxLength(256);
@@ -182,7 +188,7 @@ public class EditPasswordScreen extends Screen {
         this.commandEditBox.setHint(Component.literal("/login"));
         rootLayout.addChild(this.commandEditBox);
 
-        // 5. Опціональний чекбокс синхронізації з Bitwarden
+        // 5. Optional Bitwarden sync checkbox
         if (SYPassConfig.isBitwardenEnabled()) {
             Checkbox syncCheckbox = Checkbox.builder(Component.translatable("sypass.gui.sync.toggle"), this.font)
                     .selected(this.syncWithBitwarden)
@@ -191,32 +197,25 @@ public class EditPasswordScreen extends Screen {
             rootLayout.addChild(syncCheckbox);
         }
 
-        // Повідомлення про статус / валідацію
+        // Status / validation message
         this.errorWidget = new StringWidget(CARD_WIDTH, 9, Component.empty(), this.font);
         rootLayout.addChild(this.errorWidget);
 
-        // 6. Кнопки "Зберегти" та "Скасувати"
+        // 6. Save / Cancel buttons
         LinearLayout buttonRow = LinearLayout.horizontal().spacing(8);
         int actionBtnWidth = (CARD_WIDTH - 8) / 2;
 
-        Button saveButton = Button.builder(Component.translatable("sypass.gui.button.save"), btn -> saveAndClose())
-                .bounds(0, 0, actionBtnWidth, FIELD_HEIGHT)
-                .build();
-        buttonRow.addChild(saveButton);
-
-        Button cancelButton = Button.builder(CommonComponents.GUI_CANCEL, btn -> onClose())
-                .bounds(0, 0, actionBtnWidth, FIELD_HEIGHT)
-                .build();
-        buttonRow.addChild(cancelButton);
+        buttonRow.addChild(Button.builder(Component.translatable("sypass.gui.button.save"), btn -> saveAndClose())
+                .bounds(0, 0, actionBtnWidth, FIELD_HEIGHT).build());
+        buttonRow.addChild(Button.builder(CommonComponents.GUI_CANCEL, btn -> onClose())
+                .bounds(0, 0, actionBtnWidth, FIELD_HEIGHT).build());
 
         rootLayout.addChild(buttonRow);
 
-        // Автоматичне позиціонування по центру екрана та реєстрація всіх віджетів
         rootLayout.arrangeElements();
         FrameLayout.centerInRectangle(rootLayout, 0, 0, this.width, this.height);
         rootLayout.visitWidgets(this::addRenderableWidget);
 
-        // Фокус на першому незаповненому полі
         if (this.serverIpEditBox.getValue().isEmpty()) {
             setInitialFocus(this.serverIpEditBox);
         } else if (this.passwordEditBox.getValue().isEmpty()) {
@@ -229,14 +228,6 @@ public class EditPasswordScreen extends Screen {
     private void updateLengthButton() {
         this.lengthSelectorButton.setMessage(Component.literal(String.valueOf(this.generatedPasswordLength)));
         this.lengthSelectorButton.setTooltip(Tooltip.create(Component.translatable("sypass.gui.edit.length.tooltip", this.generatedPasswordLength)));
-    }
-
-    private void updatePasswordMask() {
-        if (showPassword) {
-            this.passwordEditBox.setFormatter((text, firstCharIndex) -> FormattedCharSequence.forward(text, Style.EMPTY));
-        } else {
-            this.passwordEditBox.setFormatter((text, firstCharIndex) -> FormattedCharSequence.forward("•".repeat(text.length()), Style.EMPTY));
-        }
     }
 
     private void saveAndClose() {
@@ -258,7 +249,7 @@ public class EditPasswordScreen extends Screen {
             return;
         }
 
-        PasswordManager.AccountData currentAcc = isEditing ? PasswordManager.getPassword(initialServerIp, initialUsername) : null;
+        AccountData currentAcc = isEditing ? PasswordManager.getPassword(initialServerIp, initialUsername) : null;
         String currentRemoteId = (currentAcc != null) ? currentAcc.remoteId() : "";
         boolean syncEnabled = SYPassConfig.isBitwardenEnabled() && SYPassConfig.isAutoSyncEnabled() && BitwardenManager.hasActiveSession();
 
@@ -273,14 +264,16 @@ public class EditPasswordScreen extends Screen {
             currentRemoteId = "";
         }
 
-        PasswordManager.savePassword(server, user, pass, cmd.isEmpty() ? "/login" : cmd, syncWithBitwarden, currentRemoteId);
+        String finalCmd = cmd.isEmpty() ? "/login" : cmd;
+        PasswordManager.savePassword(server, user, pass, finalCmd, syncWithBitwarden, currentRemoteId);
 
         if (syncWithBitwarden && syncEnabled) {
-            BitwardenManager.pushSingleItemAsync(server, user, pass, cmd.isEmpty() ? "/login" : cmd);
+            BitwardenManager.pushSingleItemAsync(server, user, pass, finalCmd);
         }
 
         if (this.parent instanceof SYPassScreen sypassScreen) {
-            sypassScreen.setStatusMessage(Component.translatable("sypass.gui.edit.saved", user, server).getString());
+            String dispIp = SYPassConfig.isStreamerModeEnabled() ? ServerAddressUtil.mask(server) : server;
+            sypassScreen.setStatusMessage(Component.translatable("sypass.gui.edit.saved", user, dispIp).getString());
             sypassScreen.refreshPasswordList();
         }
 
@@ -288,18 +281,15 @@ public class EditPasswordScreen extends Screen {
     }
 
     @Override
-    public void render(GuiGraphics guiGraphics, int mouseX, int mouseY, float partialTick) {
-        super.render(guiGraphics, mouseX, mouseY, partialTick);
-
-        int panelX = (this.width - CARD_WIDTH) / 2 - 12;
-        int panelY = (this.height - 230) / 2;
-        guiGraphics.fill(panelX, panelY, panelX + CARD_WIDTH + 24, panelY + 230, 0xD0101010);
-        guiGraphics.renderOutline(panelX, panelY, CARD_WIDTH + 24, 230, 0xFF3C3C3C);
-    }
-
-    @Override
     public void renderBackground(GuiGraphics guiGraphics, int mouseX, int mouseY, float partialTick) {
         super.renderBackground(guiGraphics, mouseX, mouseY, partialTick);
+
+        int panelW = CARD_WIDTH + 24;
+        int panelH = SYPassConfig.isBitwardenEnabled() ? 245 : 225;
+        int panelX = (this.width - panelW) / 2;
+        int panelY = (this.height - panelH) / 2;
+        guiGraphics.fill(panelX, panelY, panelX + panelW, panelY + panelH, GuiHelpers.PANEL_BG);
+        guiGraphics.renderOutline(panelX, panelY, panelW, panelH, GuiHelpers.PANEL_BORDER);
     }
 
     @Override
